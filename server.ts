@@ -730,20 +730,30 @@ async function startServer() {
             if (diff <= 5) {
               battle.winnerId = 'draw';
               resultText = 'Ничья';
+              battle.attackerResultText = 'Ничья';
+              battle.defenderResultText = 'Ничья';
               battle.pixelsToPaint = 0;
             } else if (battle.attackerRoll > battle.defenderRoll) {
               battle.winnerId = battle.attackerId;
-              if (diff > 50) resultText = 'Полный разгром';
-              else if (diff > 30) resultText = 'Решающая победа';
-              else if (diff > 15) resultText = 'Уверенное наступление';
-              else resultText = 'Малое продвижение';
+              let winText: string, loseText: string;
+              if (diff > 50) { winText = 'Полный разгром'; loseText = 'Тотальное поражение'; }
+              else if (diff > 30) { winText = 'Решающая победа'; loseText = 'Тяжёлое поражение'; }
+              else if (diff > 15) { winText = 'Уверенное наступление'; loseText = 'Отступление под давлением'; }
+              else { winText = 'Малое продвижение'; loseText = 'Незначительные потери'; }
+              battle.attackerResultText = winText;
+              battle.defenderResultText = loseText;
+              resultText = winText;
               battle.pixelsToPaint = Math.max(10, Math.floor(diff * 2));
             } else {
               battle.winnerId = battle.defenderId;
-              if (diff > 50) resultText = 'Полный разгром';
-              else if (diff > 30) resultText = 'Решающая победа';
-              else if (diff > 15) resultText = 'Уверенное наступление';
-              else resultText = 'Малое продвижение';
+              let winText: string, loseText: string;
+              if (diff > 50) { winText = 'Блестящая оборона'; loseText = 'Провальное наступление'; }
+              else if (diff > 30) { winText = 'Успешная оборона'; loseText = 'Сокрушительное поражение'; }
+              else if (diff > 15) { winText = 'Отражение атаки'; loseText = 'Вынужденное отступление'; }
+              else { winText = 'Стойкое сопротивление'; loseText = 'Незначительная неудача'; }
+              battle.attackerResultText = loseText;
+              battle.defenderResultText = winText;
+              resultText = winText;
               battle.pixelsToPaint = Math.max(10, Math.floor(diff * 2));
             }
             
