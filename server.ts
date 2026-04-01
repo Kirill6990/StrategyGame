@@ -8,7 +8,7 @@ async function startServer() {
   const app = express();
   const server = http.createServer(app);
   const io = new Server(server, { cors: { origin: '*' } });
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT) : 5000;
 
   const players = new Map();
   const nations = new Map();
