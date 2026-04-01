@@ -754,21 +754,15 @@ export default function App() {
                     context.fill();
                   });
 
-                  // Draw Occupations
+                  // Draw Occupations - use the occupier's actual color with dark diagonal stripes
                   nations.forEach(nation => {
                     if (!nation.occupations || nation.occupations.length === 0) return;
                     const union = unions.find(u => u.members.includes(nation.id));
                     const baseColor = union ? union.color : nation.color;
-                    
-                    // Lighten the color
-                    const r = parseInt(baseColor.slice(1, 3), 16);
-                    const g = parseInt(baseColor.slice(3, 5), 16);
-                    const b = parseInt(baseColor.slice(5, 7), 16);
-                    const lightColor = `rgba(${Math.min(255, r + 100)}, ${Math.min(255, g + 100)}, ${Math.min(255, b + 100)}, 0.8)`;
-                    const darkColor = `rgba(${Math.max(0, r - 50)}, ${Math.max(0, g - 50)}, ${Math.max(0, b - 50)}, 0.8)`;
 
+                    // Draw solid base in the occupier's actual color
                     context.beginPath();
-                    context.fillStyle = lightColor;
+                    context.fillStyle = baseColor;
                     nation.occupations.forEach(idx => {
                       const x = idx % gridSize.w;
                       const y = Math.floor(idx / gridSize.w);
@@ -776,9 +770,9 @@ export default function App() {
                     });
                     context.fill();
 
-                    // Draw dark diagonals
+                    // Overlay dark diagonal stripes to visually distinguish from owned territory
                     context.beginPath();
-                    context.fillStyle = darkColor;
+                    context.fillStyle = 'rgba(0, 0, 0, 0.45)';
                     nation.occupations.forEach(idx => {
                       const x = idx % gridSize.w;
                       const y = Math.floor(idx / gridSize.w);
@@ -1022,7 +1016,7 @@ export default function App() {
                 )}
               </button>
 
-              {(activeBattleId || proposingPeace) && (
+              {(activeBattleId || proposingPeace || (myDiplomaticEntity && wars.some(w => w.status === 'active' && (w.attackers.includes(myDiplomaticEntity.id) || w.defenders.includes(myDiplomaticEntity.id))))) && (
                 <button 
                   onClick={() => {
                     setIsPaintingMode(!isPaintingMode);
@@ -1034,7 +1028,7 @@ export default function App() {
                   className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${isPaintingMode ? 'bg-green-500/50 hover:bg-green-500/70' : 'hover:bg-gray-800/80'}`}
                 >
                   <Crosshair className={`w-5 h-5 ${isPaintingMode ? 'text-white' : 'text-green-400'}`} /> 
-                  <span className="font-bold text-sm">{isPaintingMode ? 'Paint Mode' : 'Move Map'}</span>
+                  <span className="font-bold text-sm">{isPaintingMode ? 'Режим окраски' : 'Двигать карту'}</span>
                 </button>
               )}
             </div>
@@ -1449,28 +1443,42 @@ export default function App() {
                       </div>
 
                       {war.status === 'active' && isParticipant && (
-                        <div className="flex gap-2">
+                        <div className="flex flex-col gap-2">
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => {
+                                setPlacingBattle(war.id);
+                                setIsPaintingMode(false);
+                                setIsRollMode(false);
+                                setShowWars(false);
+                              }}
+                              className="flex-1 bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 px-4 rounded transition-colors"
+                            >
+                              Place Battle Marker
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setProposingPeace(war.id);
+                                setPeaceClaims({});
+                                setPeacePuppets({});
+                                setShowWars(false);
+                              }}
+                              className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded transition-colors"
+                            >
+                              Propose Peace
+                            </button>
+                          </div>
                           <button 
                             onClick={() => {
-                              setPlacingBattle(war.id);
-                              setIsPaintingMode(false);
+                              setIsPaintingMode(true);
                               setIsRollMode(false);
-                              setShowWars(false); // Hide UI to place battle
+                              setPlacingBattle(null);
+                              setShowWars(false);
                             }}
-                            className="flex-1 bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 px-4 rounded transition-colors"
+                            className="w-full bg-purple-700 hover:bg-purple-600 text-white font-bold py-2 px-4 rounded transition-colors flex items-center justify-center gap-2"
                           >
-                            Place Battle Marker
-                          </button>
-                          <button 
-                            onClick={() => {
-                              setProposingPeace(war.id);
-                              setPeaceClaims({});
-                              setPeacePuppets({});
-                              setShowWars(false); // Hide UI to paint claims
-                            }}
-                            className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded transition-colors"
-                          >
-                            Propose Peace
+                            <Crosshair className="w-4 h-4" />
+                            Оккупировать территории
                           </button>
                         </div>
                       )}
@@ -1666,11 +1674,25 @@ export default function App() {
         )}
 
         {/* Painting Battle Result Overlay */}
-        {activeBattleId && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-3 rounded-full font-bold shadow-lg pointer-events-auto flex items-center gap-4">
+        {activeBattleId && isPaintingMode && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-3 rounded-full font-bold shadow-lg pointer-events-none flex items-center gap-4">
             <span>
-              Paint your won territories! 
-              ({wars.flatMap(w => w.battles).find(b => b.id === activeBattleId)?.pixelsToPaint || colonizationBattles.find(b => b.id === activeBattleId)?.pixelsToPaint || 0} left)
+              🖌 Закрасьте захваченные территории!
+              {' '}({wars.flatMap(w => w.battles).find(b => b.id === activeBattleId)?.pixelsToPaint || colonizationBattles.find(b => b.id === activeBattleId)?.pixelsToPaint || 0} пикс. осталось)
+            </span>
+          </div>
+        )}
+        {activeBattleId && !isPaintingMode && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-yellow-600 text-white px-6 py-3 rounded-full font-bold shadow-lg pointer-events-none flex items-center gap-4">
+            <span>
+              ⚔️ Вы выиграли битву! Нажмите «Режим окраски» чтобы закрасить территории
+            </span>
+          </div>
+        )}
+        {!activeBattleId && isPaintingMode && myDiplomaticEntity && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-green-600 text-white px-6 py-3 rounded-full font-bold shadow-lg pointer-events-none flex items-center gap-4">
+            <span>
+              🖌 Режим оккупации — закрашивайте вражеские территории
             </span>
           </div>
         )}
