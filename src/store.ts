@@ -90,32 +90,7 @@ export interface Battle {
   winnerId?: string;
   pixelsToPaint?: number;
   resultText?: string;
-  attackerResultText?: string;
-  defenderResultText?: string;
   readyPlayers?: string[];
-}
-
-export interface TreatyBlock {
-  id: string;
-  type: 'text' | 'non_aggression' | 'land_exchange' | 'dmz' | 'trade' | 'military_access' | 'resources' | 'timer' | 'open_entry';
-  authorId: string;
-  content?: string;
-  data?: Record<string, any>;
-}
-
-export interface Treaty {
-  id: string;
-  title: string;
-  creatorId: string;
-  parties: string[];
-  invitees: string[];
-  openEntry: boolean;
-  blocks: TreatyBlock[];
-  status: 'draft' | 'open' | 'active' | 'rejected';
-  createdAt: number;
-  expiresAt?: number;
-  acceptances: string[];
-  rejections: string[];
 }
 
 export interface PeaceTreaty {
@@ -196,15 +171,6 @@ interface GameState {
   updateNation: (data: Partial<Nation>) => void;
   disbandNation: () => void;
   publishNews: (text: string) => void;
-  treaties: Treaty[];
-  createTreaty: (title: string, openEntry: boolean) => void;
-  addTreatyBlock: (treatyId: string, block: { type: TreatyBlock['type']; content?: string; data?: Record<string, any> }) => void;
-  removeTreatyBlock: (treatyId: string, blockId: string) => void;
-  editTreatyBlock: (treatyId: string, blockId: string, content?: string, data?: Record<string, any>) => void;
-  inviteToTreaty: (treatyId: string, entityId: string) => void;
-  joinTreaty: (treatyId: string) => void;
-  acceptTreaty: (treatyId: string) => void;
-  rejectTreaty: (treatyId: string) => void;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -220,7 +186,6 @@ export const useGameStore = create<GameState>((set, get) => ({
   wars: [],
   finishedWars: [],
   colonizationBattles: [],
-  treaties: [],
   myNation: null,
   pendingRequests: [],
   spawnStatus: 'idle',
@@ -253,7 +218,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     
     newSocket.on('connect', () => set({ connected: true }));
     newSocket.on('disconnect', () => set({ connected: false }));
-    newSocket.on('gameState', (data: { nations: Nation[], chatHistory?: ChatMessage[], alliances?: Alliance[], unions?: Union[], newsHistory?: NewsItem[], allianceRequests?: AllianceRequest[], allianceChats?: Record<string, ChatMessage[]>, unSessions?: UNSession[], wars?: War[], finishedWars?: War[], colonizationBattles?: Battle[], treaties?: Treaty[] }) => {
+    newSocket.on('gameState', (data: { nations: Nation[], chatHistory?: ChatMessage[], alliances?: Alliance[], unions?: Union[], newsHistory?: NewsItem[], allianceRequests?: AllianceRequest[], allianceChats?: Record<string, ChatMessage[]>, unSessions?: UNSession[], wars?: War[], finishedWars?: War[], colonizationBattles?: Battle[] }) => {
       set({ 
         nations: data.nations, 
         chatMessages: data.chatHistory || [],
@@ -265,8 +230,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         unSessions: data.unSessions || [],
         wars: data.wars || [],
         finishedWars: data.finishedWars || [],
-        colonizationBattles: data.colonizationBattles || [],
-        treaties: data.treaties || []
+        colonizationBattles: data.colonizationBattles || []
       });
       const myNat = data.nations.find(n => n.ownerId === playerId);
       if (myNat) set({ myNation: myNat });
@@ -347,58 +311,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     newSocket.on('spawnRejected', (data: { message: string }) => set({ spawnStatus: 'rejected', spawnMessage: data.message, setupPhase: 'form' }));
     newSocket.on('spawnError', (data: { message: string }) => set({ spawnStatus: 'error', spawnMessage: data.message, setupPhase: 'form' }));
     newSocket.on('newsError', (data: { message: string }) => {
+      // We can dispatch a custom event that App.tsx will listen to for toast
       window.dispatchEvent(new CustomEvent('showToast', { detail: data.message }));
       window.dispatchEvent(new CustomEvent('newsCooldownReset'));
     });
-
-    newSocket.on('treatyUpdated', (treaty: Treaty) => set(state => ({
-      treaties: state.treaties.some(t => t.id === treaty.id)
-        ? state.treaties.map(t => t.id === treaty.id ? treaty : t)
-        : [...state.treaties, treaty]
-    })));
-    newSocket.on('treatyDeleted', (treatyId: string) => set(state => ({
-      treaties: state.treaties.filter(t => t.id !== treatyId)
-    })));
-  },
-
-  createTreaty: (title, openEntry) => {
-    const { socket } = get();
-    if (socket) socket.emit('createTreaty', { title, openEntry });
-  },
-
-  addTreatyBlock: (treatyId, block) => {
-    const { socket } = get();
-    if (socket) socket.emit('addTreatyBlock', { treatyId, ...block });
-  },
-
-  removeTreatyBlock: (treatyId, blockId) => {
-    const { socket } = get();
-    if (socket) socket.emit('removeTreatyBlock', { treatyId, blockId });
-  },
-
-  editTreatyBlock: (treatyId, blockId, content, data) => {
-    const { socket } = get();
-    if (socket) socket.emit('editTreatyBlock', { treatyId, blockId, content, data });
-  },
-
-  inviteToTreaty: (treatyId, entityId) => {
-    const { socket } = get();
-    if (socket) socket.emit('inviteToTreaty', { treatyId, entityId });
-  },
-
-  joinTreaty: (treatyId) => {
-    const { socket } = get();
-    if (socket) socket.emit('joinTreaty', { treatyId });
-  },
-
-  acceptTreaty: (treatyId) => {
-    const { socket } = get();
-    if (socket) socket.emit('acceptTreaty', { treatyId });
-  },
-
-  rejectTreaty: (treatyId) => {
-    const { socket } = get();
-    if (socket) socket.emit('rejectTreaty', { treatyId });
   },
 
   requestSpawn: (data) => {
