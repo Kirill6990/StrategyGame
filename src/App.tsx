@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Stage, Layer, Text, Image as KonvaImage, Shape, Group, Circle, Rect } from 'react-konva';
 import { useGameStore } from './store';
-import { Settings, Users, Map as MapIcon, Shield, Check, ArrowLeft, MessageSquare, Upload, Image as ImageIcon, X, Search, Globe, Landmark, ChevronLeft, Star, Swords, Crosshair, Flag, Dices } from 'lucide-react';
+import type { Treaty, TreatyBlock } from './store';
+import { Settings, Users, Map as MapIcon, Shield, Check, ArrowLeft, MessageSquare, Upload, Image as ImageIcon, X, Search, Globe, Landmark, ChevronLeft, Star, Swords, Crosshair, Flag, Dices, FileText, Plus, Trash2, Pencil, UserPlus, ScrollText } from 'lucide-react';
 
 const IDEOLOGIES = [
   'Communism', 'Fascism', 'Democracy', 'Anarcho-capitalism', 'Theocracy',
@@ -88,7 +89,8 @@ export default function App() {
     news, allianceRequests, allianceChats, approveAllianceJoin, rejectAllianceJoin, sendAllianceChatMessage,
     unSessions, createUNSession, voteUNSession, updateNation, disbandNation, publishNews,
     wars, finishedWars, declareWar, joinWar, proposePeaceTreaty, agreePeaceTreaty, rejectPeaceTreaty, placeBattle, startBattle, paintBattleResult,
-    colonizationBattles, placeColonizationBattle, startColonizationBattle, paintColonizationResult
+    colonizationBattles, placeColonizationBattle, startColonizationBattle, paintColonizationResult,
+    treaties, createTreaty, addTreatyBlock, removeTreatyBlock, editTreatyBlock, inviteToTreaty, joinTreaty, acceptTreaty, rejectTreaty
   } = useGameStore();
 
   const myDiplomaticEntity = useMemo(() => {
@@ -169,6 +171,20 @@ export default function App() {
   const [newUnionColor, setNewUnionColor] = useState('#ffffff');
   const [newUnionFlag, setNewUnionFlag] = useState('');
   const [selectedUnionId, setSelectedUnionId] = useState<string | null>(null);
+
+  // Treaties State
+  const [showTreaties, setShowTreaties] = useState(false);
+  const [treatyView, setTreatyView] = useState<'list' | 'create' | 'detail'>('list');
+  const [selectedTreatyId, setSelectedTreatyId] = useState<string | null>(null);
+  const [newTreatyTitle, setNewTreatyTitle] = useState('');
+  const [newTreatyOpen, setNewTreatyOpen] = useState(false);
+  const [addingBlock, setAddingBlock] = useState(false);
+  const [newBlockText, setNewBlockText] = useState('');
+  const [newBlockType, setNewBlockType] = useState<TreatyBlock['type']>('text');
+  const [newBlockData, setNewBlockData] = useState<Record<string, any>>({});
+  const [inviteTargetId, setInviteTargetId] = useState('');
+  const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
+  const [editingBlockText, setEditingBlockText] = useState('');
 
   // Chat Tab State
   const [chatTab, setChatTab] = useState<'global' | 'alliance'>('global');
@@ -474,7 +490,7 @@ export default function App() {
               const currentOccupierEntity = currentOccupier ? (unions.find(u => u.members.includes(currentOccupier.id))?.id || currentOccupier.id) : null;
               return currentOwnerEntity === loserId || currentOccupierEntity === loserId;
             });
-            const remaining = battle.pixelsToPaint - alreadySentRef.current.size;
+            const remaining = battle.pixelsToPaint;
             const toSend = validIndices.filter(idx => !alreadySentRef.current.has(idx)).slice(0, Math.max(0, remaining));
             if (toSend.length > 0) {
               toSend.forEach(idx => alreadySentRef.current.add(idx));
@@ -495,7 +511,7 @@ export default function App() {
               const currentOccupier = nations.find(n => n.occupations?.includes(idx));
               return !currentOwner && !currentOccupier;
             });
-            const remaining = colBattle.pixelsToPaint - alreadySentRef.current.size;
+            const remaining = colBattle.pixelsToPaint;
             const toSend = validIndices.filter(idx => !alreadySentRef.current.has(idx)).slice(0, Math.max(0, remaining));
             if (toSend.length > 0) {
               toSend.forEach(idx => alreadySentRef.current.add(idx));
@@ -570,7 +586,7 @@ export default function App() {
   };
 
   const handlePointerDown = (e: any) => {
-    if (setupPhase === 'draw' || isPaintingMode) {
+    if (setupPhase === 'draw' || isPaintingMode || proposingPeace) {
       setIsPainting(true);
       paintCell(e);
     } else if (placingBattle && myDiplomaticEntity) {
@@ -647,7 +663,7 @@ export default function App() {
   };
 
   const handlePointerMove = (e: any) => {
-    if (isPainting && (setupPhase === 'draw' || isPaintingMode)) {
+    if (isPainting && (setupPhase === 'draw' || isPaintingMode || proposingPeace)) {
       paintCell(e);
     }
   };
@@ -682,7 +698,7 @@ export default function App() {
           scaleY={scale}
           x={position.x}
           y={position.y}
-          draggable={!(setupPhase === 'draw' || isPaintingMode)}
+          draggable={!(setupPhase === 'draw' || isPaintingMode || proposingPeace)}
           onDragMove={(e) => {
             if (e.target === e.target.getStage()) {
               e.target.x(Math.round(e.target.x()));
@@ -961,7 +977,7 @@ export default function App() {
               </div>
               
               <button 
-                onClick={() => { setShowAlliances(!showAlliances); setShowUN(false); setShowUnions(false); setShowNationSettings(false); setShowWars(false); }}
+                onClick={() => { setShowAlliances(!showAlliances); setShowUN(false); setShowUnions(false); setShowNationSettings(false); setShowWars(false); setShowTreaties(false); }}
                 className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showAlliances ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
               >
                 <Globe className="w-5 h-5 text-purple-400" />
@@ -972,7 +988,7 @@ export default function App() {
               </button>
 
               <button 
-                onClick={() => { setShowUN(!showUN); setShowAlliances(false); setShowUnions(false); setShowNationSettings(false); setShowWars(false); }}
+                onClick={() => { setShowUN(!showUN); setShowAlliances(false); setShowUnions(false); setShowNationSettings(false); setShowWars(false); setShowTreaties(false); }}
                 className={`bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showUN ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
               >
                 <Landmark className="w-5 h-5 text-blue-400" />
@@ -980,7 +996,7 @@ export default function App() {
               </button>
 
               <button 
-                onClick={() => { setShowUnions(!showUnions); setShowAlliances(false); setShowUN(false); setShowNationSettings(false); setShowWars(false); }}
+                onClick={() => { setShowUnions(!showUnions); setShowAlliances(false); setShowUN(false); setShowNationSettings(false); setShowWars(false); setShowTreaties(false); }}
                 className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showUnions ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
               >
                 <Shield className="w-5 h-5 text-green-400" />
@@ -991,13 +1007,26 @@ export default function App() {
               </button>
 
               <button 
-                onClick={() => { setShowWars(!showWars); setShowAlliances(false); setShowUN(false); setShowUnions(false); setShowNationSettings(false); }}
+                onClick={() => { setShowWars(!showWars); setShowAlliances(false); setShowUN(false); setShowUnions(false); setShowNationSettings(false); setShowTreaties(false); }}
                 className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showWars ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
               >
                 <Swords className="w-5 h-5 text-red-400" />
                 <span className="font-bold text-sm">Wars</span>
                 {wars.length > 0 && (
                   <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-black text-[9px] flex items-center justify-center font-bold">{wars.length}</span>
+                )}
+              </button>
+
+              <button
+                onClick={() => { setShowTreaties(!showTreaties); setShowWars(false); setShowAlliances(false); setShowUN(false); setShowUnions(false); setShowNationSettings(false); setTreatyView('list'); }}
+                className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showTreaties ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
+              >
+                <ScrollText className="w-5 h-5 text-amber-400" />
+                <span className="font-bold text-sm">Договоры</span>
+                {myDiplomaticEntity && treaties.filter(t => t.invitees.includes(myDiplomaticEntity.id) && !t.parties.includes(myDiplomaticEntity.id)).length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 rounded-full border-2 border-black text-[9px] flex items-center justify-center font-bold">
+                    {treaties.filter(t => t.invitees.includes(myDiplomaticEntity.id) && !t.parties.includes(myDiplomaticEntity.id)).length}
+                  </span>
                 )}
               </button>
 
@@ -1080,6 +1109,7 @@ export default function App() {
                 setShowUN(false);
                 setShowUnions(false);
                 setShowWars(false);
+                setShowTreaties(false);
               }}
               className="bg-black/60 backdrop-blur-md border border-white/10 p-2 rounded-lg pointer-events-auto flex flex-col items-center justify-center gap-1 shadow-lg hover:bg-white/10 transition-colors min-w-[80px]"
             >
@@ -1092,6 +1122,291 @@ export default function App() {
             </button>
           )}
         </div>
+
+        {/* Treaties Panel */}
+        {showTreaties && myNation && (
+          <div className="absolute top-0 left-0 bottom-0 w-96 bg-black/80 backdrop-blur-md border-r border-white/10 pointer-events-auto flex flex-col z-20">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <ScrollText className="w-5 h-5 text-amber-400" />
+                <span className="font-bold text-lg">Договоры</span>
+              </div>
+              <button onClick={() => setShowTreaties(false)} className="text-gray-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {treatyView === 'list' && (
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
+                {/* Incoming invitations */}
+                {myDiplomaticEntity && treaties.filter(t => t.invitees.includes(myDiplomaticEntity.id) && !t.parties.includes(myDiplomaticEntity.id)).map(t => (
+                  <div key={t.id} className="bg-amber-900/40 border border-amber-500/40 rounded-lg p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <ScrollText className="w-4 h-4 text-amber-400" />
+                      <span className="font-bold text-amber-300 text-sm">{t.title}</span>
+                      <span className="ml-auto text-xs text-amber-400 bg-amber-900/60 px-2 py-0.5 rounded">Приглашение</span>
+                    </div>
+                    <p className="text-xs text-gray-400">Создатель: {nations.find(n => n.id === t.creatorId)?.name || unions.find(u => u.id === t.creatorId)?.name || t.creatorId}</p>
+                    <p className="text-xs text-gray-400">Участников: {t.parties.length}</p>
+                    <div className="flex gap-2">
+                      <button onClick={() => { acceptTreaty(t.id); }} className="flex-1 bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded text-xs font-bold">Принять</button>
+                      <button onClick={() => { rejectTreaty(t.id); }} className="flex-1 bg-red-900 hover:bg-red-800 text-white px-3 py-1 rounded text-xs font-bold">Отклонить</button>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Open treaties I can join */}
+                {myDiplomaticEntity && treaties.filter(t => t.isOpen && !t.parties.includes(myDiplomaticEntity.id) && !t.invitees.includes(myDiplomaticEntity.id) && t.status === 'draft').map(t => (
+                  <div key={t.id} className="bg-blue-900/30 border border-blue-500/30 rounded-lg p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <ScrollText className="w-4 h-4 text-blue-400" />
+                      <span className="font-bold text-sm">{t.title}</span>
+                      <span className="ml-auto text-xs text-blue-400 bg-blue-900/60 px-2 py-0.5 rounded">Открытый</span>
+                    </div>
+                    <p className="text-xs text-gray-400">Участников: {t.parties.length}</p>
+                    <button onClick={() => joinTreaty(t.id)} className="w-full bg-blue-700 hover:bg-blue-600 text-white px-3 py-1 rounded text-xs font-bold">Присоединиться</button>
+                  </div>
+                ))}
+
+                {/* My treaties */}
+                {myDiplomaticEntity && treaties.filter(t => t.parties.includes(myDiplomaticEntity.id)).map(t => (
+                  <div key={t.id} className="bg-white/5 border border-white/10 rounded-lg p-3 space-y-1 cursor-pointer hover:bg-white/10 transition-colors"
+                    onClick={() => { setSelectedTreatyId(t.id); setTreatyView('detail'); }}>
+                    <div className="flex items-center gap-2">
+                      <ScrollText className="w-4 h-4 text-amber-400" />
+                      <span className="font-bold text-sm">{t.title}</span>
+                      {t.isOpen && <span className="ml-auto text-xs text-blue-400 bg-blue-900/40 px-2 py-0.5 rounded">Открытый</span>}
+                      {t.status === 'active' && <span className="ml-auto text-xs text-green-400 bg-green-900/40 px-2 py-0.5 rounded">Активен</span>}
+                    </div>
+                    <p className="text-xs text-gray-400">Блоков: {t.blocks.length} · Участников: {t.parties.length}</p>
+                  </div>
+                ))}
+
+                {treaties.length === 0 && !myDiplomaticEntity && (
+                  <p className="text-gray-500 text-sm italic text-center py-8">Нет договоров</p>
+                )}
+
+                {/* Create treaty button */}
+                {myNation && (
+                  <button
+                    onClick={() => setTreatyView('create')}
+                    className="w-full bg-amber-800/60 hover:bg-amber-700/60 border border-amber-600/40 text-amber-300 px-4 py-2 rounded-lg flex items-center justify-center gap-2 text-sm font-bold mt-2"
+                  >
+                    <Plus className="w-4 h-4" /> Создать договор
+                  </button>
+                )}
+              </div>
+            )}
+
+            {treatyView === 'create' && (
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
+                <button onClick={() => setTreatyView('list')} className="flex items-center gap-1 text-gray-400 hover:text-white text-sm">
+                  <ChevronLeft className="w-4 h-4" /> Назад
+                </button>
+                <h3 className="font-bold text-lg">Новый договор</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">Название договора</label>
+                    <input
+                      value={newTreatyTitle}
+                      onChange={e => setNewTreatyTitle(e.target.value)}
+                      className="w-full bg-white/10 border border-white/20 rounded px-3 py-2 text-sm focus:outline-none focus:border-amber-500"
+                      placeholder="Например: Пакт о ненападении"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={newTreatyOpen} onChange={e => setNewTreatyOpen(e.target.checked)} className="w-4 h-4 accent-amber-500" />
+                    <span className="text-sm">Открытый договор (любой может присоединиться)</span>
+                  </label>
+                  <button
+                    onClick={() => {
+                      if (!newTreatyTitle.trim()) return;
+                      createTreaty(newTreatyTitle.trim(), newTreatyOpen);
+                      setNewTreatyTitle('');
+                      setNewTreatyOpen(false);
+                      setTreatyView('list');
+                    }}
+                    disabled={!newTreatyTitle.trim()}
+                    className="w-full bg-amber-700 hover:bg-amber-600 disabled:opacity-40 text-white px-4 py-2 rounded-lg font-bold text-sm"
+                  >
+                    Создать
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {treatyView === 'detail' && (() => {
+              const treaty = treaties.find(t => t.id === selectedTreatyId);
+              if (!treaty) return <div className="p-4 text-gray-400">Не найдено</div>;
+              const isParty = !!myDiplomaticEntity && treaty.parties.includes(myDiplomaticEntity.id);
+              const isCreator = !!myDiplomaticEntity && treaty.creatorId === myDiplomaticEntity.id;
+              return (
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
+                  <button onClick={() => setTreatyView('list')} className="flex items-center gap-1 text-gray-400 hover:text-white text-sm">
+                    <ChevronLeft className="w-4 h-4" /> Назад
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <ScrollText className="w-5 h-5 text-amber-400" />
+                    <h3 className="font-bold text-lg">{treaty.title}</h3>
+                    {treaty.isOpen && <span className="text-xs text-blue-400 bg-blue-900/40 px-2 py-0.5 rounded">Открытый</span>}
+                    {treaty.status === 'active' && <span className="text-xs text-green-400 bg-green-900/40 px-2 py-0.5 rounded">Активен</span>}
+                  </div>
+
+                  {/* Parties */}
+                  <div>
+                    <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Участники ({treaty.parties.length})</p>
+                    <div className="space-y-1">
+                      {treaty.parties.map(pid => {
+                        const nation = nations.find(n => n.id === pid);
+                        const union = unions.find(u => u.id === pid);
+                        return (
+                          <div key={pid} className="flex items-center gap-2 text-sm py-1 border-b border-white/5">
+                            <div className="w-3 h-3 rounded-full" style={{ background: nation?.color || union?.color || '#888' }} />
+                            <span>{nation?.name || union?.name || pid}</span>
+                            {pid === treaty.creatorId && <span className="text-xs text-amber-400 ml-auto">Создатель</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Invite */}
+                  {isCreator && treaty.status === 'draft' && (
+                    <div>
+                      <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Пригласить сторону</p>
+                      <div className="flex gap-2">
+                        <select
+                          value={inviteTargetId}
+                          onChange={e => setInviteTargetId(e.target.value)}
+                          className="flex-1 bg-white/10 border border-white/20 rounded px-2 py-1 text-sm focus:outline-none"
+                        >
+                          <option value="">— выбрать —</option>
+                          {nations.filter(n => !treaty.parties.includes(n.id) && !treaty.invitees.includes(n.id)).map(n => (
+                            <option key={n.id} value={n.id}>{n.name}</option>
+                          ))}
+                          {unions.filter(u => !treaty.parties.includes(u.id) && !treaty.invitees.includes(u.id)).map(u => (
+                            <option key={u.id} value={u.id}>{u.name} (союз)</option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => { if (inviteTargetId) { inviteToTreaty(treaty.id, inviteTargetId); setInviteTargetId(''); } }}
+                          className="bg-blue-700 hover:bg-blue-600 text-white px-3 py-1 rounded text-sm"
+                        >
+                          <UserPlus className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Blocks */}
+                  <div>
+                    <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">Блоки договора</p>
+                    <div className="space-y-2">
+                      {treaty.blocks.map((block, i) => (
+                        <div key={block.id} className="bg-white/5 border border-white/10 rounded-lg p-3">
+                          {editingBlockId === block.id ? (
+                            <div className="space-y-2">
+                              <textarea
+                                value={editingBlockText}
+                                onChange={e => setEditingBlockText(e.target.value)}
+                                className="w-full bg-white/10 border border-white/20 rounded px-2 py-1 text-sm focus:outline-none resize-none"
+                                rows={3}
+                              />
+                              <div className="flex gap-2">
+                                <button onClick={() => {
+                                  editTreatyBlock(treaty.id, block.id, editingBlockText);
+                                  setEditingBlockId(null);
+                                }} className="bg-green-700 hover:bg-green-600 text-white px-3 py-1 rounded text-xs font-bold">Сохранить</button>
+                                <button onClick={() => setEditingBlockId(null)} className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-xs font-bold">Отмена</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-start gap-2">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-xs font-bold text-amber-400 uppercase">{block.type}</span>
+                                  <span className="text-xs text-gray-500">#{i + 1}</span>
+                                </div>
+                                <p className="text-sm text-gray-200 whitespace-pre-wrap">{block.content}</p>
+                              </div>
+                              {isParty && (
+                                <div className="flex flex-col gap-1 shrink-0">
+                                  <button onClick={() => { setEditingBlockId(block.id); setEditingBlockText(block.content); }} className="text-gray-400 hover:text-white">
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button onClick={() => removeTreatyBlock(treaty.id, block.id)} className="text-gray-400 hover:text-red-400">
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {treaty.blocks.length === 0 && <p className="text-gray-500 text-sm italic">Нет блоков. Добавьте первый!</p>}
+                    </div>
+
+                    {/* Add block */}
+                    {isParty && treaty.status === 'draft' && (
+                      addingBlock ? (
+                        <div className="mt-3 space-y-2">
+                          <div>
+                            <label className="text-xs text-gray-400 block mb-1">Тип блока</label>
+                            <select
+                              value={newBlockType}
+                              onChange={e => setNewBlockType(e.target.value as TreatyBlock['type'])}
+                              className="w-full bg-white/10 border border-white/20 rounded px-2 py-1 text-sm focus:outline-none"
+                            >
+                              <option value="text">Текст</option>
+                              <option value="clause">Статья</option>
+                              <option value="obligation">Обязательство</option>
+                              <option value="condition">Условие</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-xs text-gray-400 block mb-1">Содержание</label>
+                            <textarea
+                              value={newBlockText}
+                              onChange={e => setNewBlockText(e.target.value)}
+                              className="w-full bg-white/10 border border-white/20 rounded px-2 py-1 text-sm focus:outline-none resize-none"
+                              rows={3}
+                              placeholder="Введите текст блока..."
+                            />
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => {
+                                if (!newBlockText.trim()) return;
+                                addTreatyBlock(treaty.id, newBlockType, newBlockText.trim());
+                                setNewBlockText('');
+                                setNewBlockType('text');
+                                setAddingBlock(false);
+                              }}
+                              disabled={!newBlockText.trim()}
+                              className="flex-1 bg-amber-700 hover:bg-amber-600 disabled:opacity-40 text-white px-3 py-1 rounded text-sm font-bold"
+                            >
+                              Добавить
+                            </button>
+                            <button onClick={() => { setAddingBlock(false); setNewBlockText(''); }} className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">
+                              Отмена
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setAddingBlock(true)}
+                          className="mt-3 w-full border border-dashed border-white/20 hover:border-amber-500/50 text-gray-400 hover:text-amber-400 py-2 rounded-lg flex items-center justify-center gap-2 text-sm transition-colors"
+                        >
+                          <Plus className="w-4 h-4" /> Добавить блок
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
 
         {/* Nation Settings Panel */}
         {showNationSettings && myNation && (
@@ -1605,7 +1920,13 @@ export default function App() {
               );
             })()}
 
-            <div className="flex gap-2 mt-2">
+            <div className="flex gap-2 mt-2 flex-wrap">
+              <button 
+                onClick={() => { setPeaceClaims({}); setPeacePuppets({}); }}
+                className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm"
+              >
+                ↩ Статус-кво
+              </button>
               <button 
                 onClick={() => {
                   proposePeaceTreaty(proposingPeace, peaceClaims, peacePuppets);
@@ -1615,7 +1936,7 @@ export default function App() {
                 }} 
                 className="bg-white text-green-700 hover:bg-gray-100 px-4 py-1 rounded"
               >
-                Submit Proposal
+                Отправить предложение
               </button>
               <button 
                 onClick={() => {
@@ -1625,7 +1946,7 @@ export default function App() {
                 }} 
                 className="bg-black/30 hover:bg-black/50 px-4 py-1 rounded"
               >
-                Cancel
+                Отмена
               </button>
             </div>
           </div>

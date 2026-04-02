@@ -41,3 +41,6 @@ externalPort = 80
 deploymentTarget = "vm"
 run = ["npx", "tsx", "server.ts"]
 build = ["npm", "run", "build"]
+
+[objectStorage]
+defaultBucketID = "replit-objstore-fdc58053-c180-47e5-85c2-16f0b5c9d049"

@@ -18,6 +18,7 @@ async function startServer() {
   const unions = new Map();
   const newsHistory: any[] = [];
   const allianceRequests = new Map();
+  const treaties = new Map();
   const allianceChats = new Map();
   const unSessions = new Map();
   const wars = new Map();
@@ -50,7 +51,8 @@ async function startServer() {
       unSessions: Array.from(unSessions.values()),
       wars: Array.from(wars.values()),
       finishedWars: Array.from(finishedWars.values()),
-      colonizationBattles: Array.from(colonizationBattles.values())
+      colonizationBattles: Array.from(colonizationBattles.values()),
+      treaties: Array.from(treaties.values())
     });
 
     socket.on('chatMessage', (data) => {
@@ -1081,6 +1083,135 @@ async function startServer() {
       io.emit('nationDeleted', player.nationId);
       socket.emit('disbandSuccess');
       addNews(`${nation.name} has collapsed and disbanded.`, 'spawn');
+    });
+
+    socket.on('createTreaty', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const entity = getDiplomaticEntity(player.nationId);
+      const treatyId = Math.random().toString(36).substring(7);
+      const treaty = {
+        id: treatyId,
+        title: data.title || 'Без названия',
+        creatorId: entity.id,
+        parties: [entity.id],
+        invitees: [],
+        openEntry: data.openEntry || false,
+        blocks: [],
+        status: 'draft',
+        createdAt: Date.now(),
+        acceptances: [entity.id],
+        rejections: [],
+      };
+      treaties.set(treatyId, treaty);
+      io.emit('treatyUpdated', treaty);
+    });
+
+    socket.on('addTreatyBlock', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const entity = getDiplomaticEntity(player.nationId);
+      const treaty = treaties.get(data.treatyId);
+      if (!treaty || (!treaty.parties.includes(entity.id) && !treaty.openEntry)) return;
+      const block = {
+        id: Math.random().toString(36).substring(7),
+        type: data.type,
+        authorId: entity.id,
+        content: data.content || '',
+        data: data.data || {},
+      };
+      treaty.blocks.push(block);
+      io.emit('treatyUpdated', treaty);
+    });
+
+    socket.on('removeTreatyBlock', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const entity = getDiplomaticEntity(player.nationId);
+      const treaty = treaties.get(data.treatyId);
+      if (!treaty || !treaty.parties.includes(entity.id)) return;
+      const block = treaty.blocks.find((b: any) => b.id === data.blockId);
+      if (block && (block.authorId === entity.id || treaty.creatorId === entity.id)) {
+        treaty.blocks = treaty.blocks.filter((b: any) => b.id !== data.blockId);
+        io.emit('treatyUpdated', treaty);
+      }
+    });
+
+    socket.on('editTreatyBlock', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const entity = getDiplomaticEntity(player.nationId);
+      const treaty = treaties.get(data.treatyId);
+      if (!treaty || !treaty.parties.includes(entity.id)) return;
+      const block = treaty.blocks.find((b: any) => b.id === data.blockId);
+      if (block && block.authorId === entity.id) {
+        if (data.content !== undefined) block.content = data.content;
+        if (data.data !== undefined) block.data = { ...(block.data || {}), ...data.data };
+        io.emit('treatyUpdated', treaty);
+      }
+    });
+
+    socket.on('inviteToTreaty', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const entity = getDiplomaticEntity(player.nationId);
+      const treaty = treaties.get(data.treatyId);
+      if (!treaty || !treaty.parties.includes(entity.id)) return;
+      if (!treaty.invitees.includes(data.entityId) && !treaty.parties.includes(data.entityId)) {
+        treaty.invitees.push(data.entityId);
+        io.emit('treatyUpdated', treaty);
+      }
+    });
+
+    socket.on('joinTreaty', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const entity = getDiplomaticEntity(player.nationId);
+      const treaty = treaties.get(data.treatyId);
+      if (!treaty) return;
+      if (treaty.openEntry || treaty.invitees.includes(entity.id)) {
+        if (!treaty.parties.includes(entity.id)) {
+          treaty.parties.push(entity.id);
+        }
+        if (!treaty.acceptances.includes(entity.id)) {
+          treaty.acceptances.push(entity.id);
+        }
+        io.emit('treatyUpdated', treaty);
+      }
+    });
+
+    socket.on('acceptTreaty', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const entity = getDiplomaticEntity(player.nationId);
+      const treaty = treaties.get(data.treatyId);
+      if (!treaty || !treaty.parties.includes(entity.id)) return;
+      if (!treaty.acceptances.includes(entity.id)) {
+        treaty.acceptances.push(entity.id);
+      }
+      if (treaty.parties.every((p: string) => treaty.acceptances.includes(p)) && treaty.parties.length > 1) {
+        treaty.status = 'active';
+        const timerBlock = treaty.blocks.find((b: any) => b.type === 'timer');
+        if (timerBlock?.data?.days) {
+          treaty.expiresAt = Date.now() + timerBlock.data.days * 24 * 60 * 60 * 1000;
+        }
+      }
+      io.emit('treatyUpdated', treaty);
+    });
+
+    socket.on('rejectTreaty', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const entity = getDiplomaticEntity(player.nationId);
+      const treaty = treaties.get(data.treatyId);
+      if (!treaty) return;
+      if (!treaty.rejections.includes(entity.id)) {
+        treaty.rejections.push(entity.id);
+      }
+      if (treaty.status !== 'active') {
+        treaty.status = 'rejected';
+      }
+      io.emit('treatyUpdated', treaty);
     });
 
     socket.on('disconnect', () => {
