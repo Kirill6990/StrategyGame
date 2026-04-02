@@ -11,7 +11,7 @@ async function startServer() {
   const PORT = 3000;
 
   const players = new Map();
-  const nations = new Map();
+  let nations = new Map();
   const spawnRequests = new Map();
   const chatHistory: any[] = [];
   const alliances = new Map();
@@ -23,6 +23,7 @@ async function startServer() {
   const wars = new Map();
   const finishedWars = new Map();
   const colonizationBattles = new Map();
+  const treaties = new Map();
   const lastNewsTime = new Map<string, number>();
 
   const getRandomColor = () => '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
@@ -34,10 +35,38 @@ async function startServer() {
     io.emit('newsUpdate', item);
   };
 
+  const disconnectTimeouts = new Map<string, NodeJS.Timeout>();
+
+  // Periodic checks
+  setInterval(() => {
+    const now = Date.now();
+    for (const [id, treaty] of treaties.entries()) {
+      if (treaty.status === 'active') {
+        const timerCondition = treaty.conditions.find((c: any) => c.type === 'timer');
+        if (timerCondition && timerCondition.duration) {
+          // Assuming the timer starts when the treaty becomes active
+          // We need to store activatedAt. Let's add it if not present.
+          if (!treaty.activatedAt) {
+            treaty.activatedAt = now;
+          } else if (now - treaty.activatedAt >= timerCondition.duration) {
+            treaty.status = 'expired';
+            io.emit('treatyUpdated', treaty);
+          }
+        }
+      }
+    }
+  }, 5000);
+
   io.on('connection', (socket) => {
     const playerId = socket.handshake.auth?.playerId || socket.id;
     socket.join(playerId);
     console.log('User connected:', playerId);
+    
+    if (disconnectTimeouts.has(playerId)) {
+      clearTimeout(disconnectTimeouts.get(playerId)!);
+      disconnectTimeouts.delete(playerId);
+      console.log('User reconnected, cleared disconnect timeout:', playerId);
+    }
     
     socket.emit('gameState', { 
       nations: Array.from(nations.values()), 
@@ -50,7 +79,8 @@ async function startServer() {
       unSessions: Array.from(unSessions.values()),
       wars: Array.from(wars.values()),
       finishedWars: Array.from(finishedWars.values()),
-      colonizationBattles: Array.from(colonizationBattles.values())
+      colonizationBattles: Array.from(colonizationBattles.values()),
+      treaties: Array.from(treaties.values())
     });
 
     socket.on('chatMessage', (data) => {
@@ -567,6 +597,7 @@ async function startServer() {
             // 1. Transfer territories
             const claims = war.peaceTreaty.territoryClaims;
             const newNations = new Map(nations);
+            const updatedNationIds = new Set<string>();
             
             for (const [territoryIdxStr, claimerId] of Object.entries(claims)) {
               const territoryIdx = parseInt(territoryIdxStr);
@@ -583,7 +614,7 @@ async function startServer() {
                 }
                 if (changed) {
                   newNations.set(nId, n);
-                  io.emit('nationUpdated', n);
+                  updatedNationIds.add(nId);
                 }
               }
               // Add to new owner
@@ -595,7 +626,7 @@ async function startServer() {
               if (claimer && !claimer.territories.includes(territoryIdx)) {
                 claimer.territories.push(territoryIdx);
                 newNations.set(actualClaimerId, claimer);
-                io.emit('nationUpdated', claimer);
+                updatedNationIds.add(actualClaimerId);
               }
             }
             
@@ -615,7 +646,7 @@ async function startServer() {
                     target.status = 'Puppet';
                     target.parentId = actualClaimerId;
                     newNations.set(memberId, target);
-                    io.emit('nationUpdated', target);
+                    updatedNationIds.add(memberId);
                   }
                 }
               } else {
@@ -624,7 +655,7 @@ async function startServer() {
                   target.status = 'Puppet';
                   target.parentId = actualClaimerId;
                   newNations.set(targetId, target);
-                  io.emit('nationUpdated', target);
+                  updatedNationIds.add(targetId);
                 }
               }
             }
@@ -643,9 +674,15 @@ async function startServer() {
                     return !(owner && enemyNationIds.has(owner.id));
                   });
                   newNations.set(nId, n);
-                  io.emit('nationUpdated', n);
+                  updatedNationIds.add(nId);
                 }
               }
+            }
+            
+            // Emit updates for all changed nations
+            nations = newNations;
+            for (const nId of updatedNationIds) {
+              io.emit('nationUpdated', nations.get(nId));
             }
             
             war.status = 'finished';
@@ -806,6 +843,7 @@ async function startServer() {
             }
           }
           
+          nations = newNations;
           battle.pixelsToPaint -= successfullyPainted;
           io.emit('warUpdated', war);
         }
@@ -851,12 +889,14 @@ async function startServer() {
               if (!myNation.occupations.includes(territoryIdx)) {
                 myNation.occupations.push(territoryIdx);
                 newNations.set(player.nationId, myNation);
+                nations = newNations;
                 io.emit('nationUpdated', myNation);
               }
             }
           }
         }
       }
+      nations = newNations;
     });
 
     socket.on('publishNews', (text) => {
@@ -941,6 +981,149 @@ async function startServer() {
       }
     });
 
+    socket.on('createTreaty', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      
+      const entity = getDiplomaticEntity(player.nationId);
+      
+      const treaty = {
+        id: Math.random().toString(36).substring(7),
+        name: data.name || 'New Treaty',
+        creatorId: entity.id,
+        participants: [entity.id],
+        invited: data.invited || [],
+        isPublic: data.isPublic || false,
+        status: 'draft',
+        text: data.text || '',
+        actions: data.actions || [],
+        conditions: data.conditions || [],
+        agreements: [entity.id],
+        createdAt: Date.now()
+      };
+      
+      treaties.set(treaty.id, treaty);
+      io.emit('treatyCreated', treaty);
+    });
+
+    socket.on('joinTreaty', (treatyId) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const entity = getDiplomaticEntity(player.nationId);
+      
+      const treaty = treaties.get(treatyId);
+      if (!treaty) return;
+      
+      if (treaty.isPublic || treaty.invited.includes(entity.id)) {
+        if (!treaty.participants.includes(entity.id)) {
+          treaty.participants.push(entity.id);
+          io.emit('treatyUpdated', treaty);
+        }
+      }
+    });
+
+    socket.on('denounceTreaty', (treatyId) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const entity = getDiplomaticEntity(player.nationId);
+      
+      const treaty = treaties.get(treatyId);
+      if (!treaty || treaty.status !== 'active' || !treaty.participants.includes(entity.id)) return;
+      
+      treaty.status = 'denounced';
+      io.emit('treatyUpdated', treaty);
+    });
+
+    socket.on('signTreaty', (treatyId) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const entity = getDiplomaticEntity(player.nationId);
+      
+      const treaty = treaties.get(treatyId);
+      if (!treaty || !treaty.participants.includes(entity.id)) return;
+      
+      if (!treaty.agreements.includes(entity.id)) {
+        treaty.agreements.push(entity.id);
+        
+        // Check if everyone signed
+        if (treaty.participants.every((p: string) => treaty.agreements.includes(p))) {
+          treaty.status = 'active';
+          
+          // Apply actions
+          const newNations = new Map(nations);
+          const updatedNationIds = new Set<string>();
+          
+          for (const action of treaty.actions) {
+            if (action.type === 'transfer_land' && action.targetId && action.territories) {
+              const targetNation = newNations.get(action.targetId);
+              if (targetNation) {
+                for (const territoryIdx of action.territories) {
+                  // Remove from current owner
+                  const currentOwner = Array.from(newNations.values()).find(n => n.territories.includes(territoryIdx));
+                  if (currentOwner) {
+                    currentOwner.territories = currentOwner.territories.filter((t: number) => t !== territoryIdx);
+                    updatedNationIds.add(currentOwner.id);
+                  }
+                  
+                  // Remove from current occupier
+                  const currentOccupier = Array.from(newNations.values()).find(n => n.occupations?.includes(territoryIdx));
+                  if (currentOccupier) {
+                    currentOccupier.occupations = currentOccupier.occupations.filter((t: number) => t !== territoryIdx);
+                    updatedNationIds.add(currentOccupier.id);
+                  }
+                  
+                  // Add to target
+                  if (!targetNation.territories.includes(territoryIdx)) {
+                    targetNation.territories.push(territoryIdx);
+                    updatedNationIds.add(targetNation.id);
+                  }
+                }
+              }
+            } else if (action.type === 'create_nation' && action.newNationName && action.territories) {
+              const newNationId = Math.random().toString(36).substring(7);
+              const newNation = {
+                id: newNationId,
+                name: action.newNationName,
+                shortName: action.newNationName.substring(0, 3).toUpperCase(),
+                color: action.newNationColor || '#ffffff',
+                territories: [...action.territories],
+                occupations: [],
+                ideology: 'Neutral',
+                status: 'Independent',
+                createdAt: Date.now()
+              };
+              
+              for (const territoryIdx of action.territories) {
+                // Remove from current owner
+                const currentOwner = Array.from(newNations.values()).find(n => n.territories.includes(territoryIdx));
+                if (currentOwner) {
+                  currentOwner.territories = currentOwner.territories.filter((t: number) => t !== territoryIdx);
+                  updatedNationIds.add(currentOwner.id);
+                }
+                
+                // Remove from current occupier
+                const currentOccupier = Array.from(newNations.values()).find(n => n.occupations?.includes(territoryIdx));
+                if (currentOccupier) {
+                  currentOccupier.occupations = currentOccupier.occupations.filter((t: number) => t !== territoryIdx);
+                  updatedNationIds.add(currentOccupier.id);
+                }
+              }
+              
+              newNations.set(newNationId, newNation);
+              updatedNationIds.add(newNationId);
+            }
+          }
+          
+          nations = newNations;
+          updatedNationIds.forEach(id => {
+            io.emit('nationUpdated', nations.get(id));
+          });
+        }
+        
+        io.emit('treatyUpdated', treaty);
+      }
+    });
+
     socket.on('paintColonizationResult', (data) => {
       const player = players.get(playerId);
       if (!player) return;
@@ -970,6 +1153,7 @@ async function startServer() {
           
           if (successfullyPainted > 0) {
             newNations.set(player.nationId, winnerNation);
+            nations = newNations;
             io.emit('nationUpdated', winnerNation);
             
             battle.pixelsToPaint -= successfullyPainted;
@@ -1075,6 +1259,22 @@ async function startServer() {
 
     socket.on('disconnect', () => {
       console.log('User disconnected:', playerId);
+      
+      const timeout = setTimeout(() => {
+        const player = players.get(playerId);
+        if (player) {
+          const nation = nations.get(player.nationId);
+          if (nation) {
+            nations.delete(player.nationId);
+            players.delete(playerId);
+            io.emit('nationDeleted', player.nationId);
+            addNews(`${nation.name} has collapsed due to inactivity.`, 'spawn');
+          }
+        }
+        disconnectTimeouts.delete(playerId);
+      }, 5 * 60 * 1000); // 5 minutes
+      
+      disconnectTimeouts.set(playerId, timeout);
     });
   });
 

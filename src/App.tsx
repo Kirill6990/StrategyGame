@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Stage, Layer, Text, Image as KonvaImage, Shape, Group, Circle, Rect } from 'react-konva';
 import { useGameStore } from './store';
-import { Settings, Users, Map as MapIcon, Shield, Check, ArrowLeft, MessageSquare, Upload, Image as ImageIcon, X, Search, Globe, Landmark, ChevronLeft, Star, Swords, Crosshair, Flag, Dices } from 'lucide-react';
+import { Settings, Users, Map as MapIcon, Shield, Check, ArrowLeft, MessageSquare, Upload, Image as ImageIcon, X, Search, Globe, Landmark, ChevronLeft, Star, Swords, Crosshair, Flag, Dices, ScrollText } from 'lucide-react';
 
 const IDEOLOGIES = [
   'Communism', 'Fascism', 'Democracy', 'Anarcho-capitalism', 'Theocracy',
@@ -88,7 +88,8 @@ export default function App() {
     news, allianceRequests, allianceChats, approveAllianceJoin, rejectAllianceJoin, sendAllianceChatMessage,
     unSessions, createUNSession, voteUNSession, updateNation, disbandNation, publishNews,
     wars, finishedWars, declareWar, joinWar, proposePeaceTreaty, agreePeaceTreaty, rejectPeaceTreaty, placeBattle, startBattle, paintBattleResult,
-    colonizationBattles, placeColonizationBattle, startColonizationBattle, paintColonizationResult
+    colonizationBattles, placeColonizationBattle, startColonizationBattle, paintColonizationResult,
+    treaties, createTreaty, joinTreaty, signTreaty, denounceTreaty
   } = useGameStore();
 
   const myDiplomaticEntity = useMemo(() => {
@@ -113,6 +114,10 @@ export default function App() {
       isFounder: true
     };
   }, [myNation, unions]);
+
+  const getEntity = (id: string) => {
+    return nations.find(n => n.id === id) || alliances.find(a => a.id === id) || unions.find(u => u.id === id);
+  };
 
   const [name, setName] = useState('');
   const [shortName, setShortName] = useState('');
@@ -150,6 +155,17 @@ export default function App() {
   const [selectedWarId, setSelectedWarId] = useState<string | null>(null);
   const [warTargetId, setWarTargetId] = useState('');
   const [warReason, setWarReason] = useState('');
+  
+  // Treaties State
+  const [showTreaties, setShowTreaties] = useState(false);
+  const [treatyView, setTreatyView] = useState<'list' | 'create' | 'details'>('list');
+  const [selectedTreatyId, setSelectedTreatyId] = useState<string | null>(null);
+  const [treatyActions, setTreatyActions] = useState<TreatyAction[]>([]);
+  const [treatyConditions, setTreatyConditions] = useState<TreatyCondition[]>([]);
+  const [treatyActionDesc, setTreatyActionDesc] = useState('');
+  const [treatyConditionDesc, setTreatyConditionDesc] = useState('');
+  const [treatyInvited, setTreatyInvited] = useState<string[]>([]);
+  const [treatySelectMode, setTreatySelectMode] = useState<{actionId: string, type: 'transfer_land' | 'create_nation'} | null>(null);
   
   // Battle State
   const [placingBattle, setPlacingBattle] = useState<string | null>(null); // warId
@@ -471,6 +487,8 @@ export default function App() {
 
               const loserId = battle.winnerId === battle.attackerId ? battle.defenderId : battle.attackerId;
               
+              if (currentOccupierEntity === battle.winnerId) return false;
+              
               return currentOwnerEntity === loserId || currentOccupierEntity === loserId;
             });
             
@@ -550,6 +568,8 @@ export default function App() {
             const currentOccupier = nations.find(n => n.occupations?.includes(idx));
             const currentOccupierEntity = currentOccupier ? (unions.find(u => u.members.includes(currentOccupier.id))?.id || currentOccupier.id) : null;
 
+            if (currentOccupierEntity === myDiplomaticEntity.id) return false;
+
             return myWars.some(w => {
               const isAttacker = w.attackers.includes(myDiplomaticEntity.id);
               const enemies = isAttacker ? w.defenders : w.attackers;
@@ -580,6 +600,9 @@ export default function App() {
     if (setupPhase === 'draw' || isPaintingMode) {
       setIsPainting(true);
       paintCell(e);
+    } else if (treatySelectMode) {
+      setIsPainting(true);
+      selectTreatyCell(e);
     } else if (placingBattle && myDiplomaticEntity) {
       const stage = e.target.getStage();
       const point = stage.getPointerPosition();
@@ -654,8 +677,55 @@ export default function App() {
   };
 
   const handlePointerMove = (e: any) => {
-    if (isPainting && (setupPhase === 'draw' || isPaintingMode)) {
-      paintCell(e);
+    if (isPainting && (setupPhase === 'draw' || isPaintingMode || treatySelectMode)) {
+      if (treatySelectMode) {
+        selectTreatyCell(e);
+      } else {
+        paintCell(e);
+      }
+    }
+  };
+
+  const selectTreatyCell = (e: any) => {
+    if (!landGrid || gridSize.w === 0 || !treatySelectMode) return;
+    const stage = e.target.getStage();
+    const point = stage.getPointerPosition();
+    
+    const x = Math.floor((point.x - stage.x()) / stage.scaleX());
+    const y = Math.floor((point.y - stage.y()) / stage.scaleY());
+
+    const newIndices: number[] = [];
+    
+    for (let dy = -BRUSH_RADIUS; dy <= BRUSH_RADIUS; dy++) {
+      for (let dx = -BRUSH_RADIUS; dx <= BRUSH_RADIUS; dx++) {
+        if (dx * dx + dy * dy <= BRUSH_RADIUS * BRUSH_RADIUS) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && nx < gridSize.w && ny >= 0 && ny < gridSize.h) {
+            const idx = ny * gridSize.w + nx;
+            if (landGrid[idx] === 1) {
+              newIndices.push(idx);
+            }
+          }
+        }
+      }
+    }
+
+    const isErase = e.evt && e.evt.buttons === 2; // Right click to erase
+
+    if (newIndices.length > 0) {
+      setTreatyActions(prev => prev.map(action => {
+        if (action.id === treatySelectMode.actionId) {
+          const currentTerritories = new Set(action.territories || []);
+          if (isErase) {
+            newIndices.forEach(idx => currentTerritories.delete(idx));
+          } else {
+            newIndices.forEach(idx => currentTerritories.add(idx));
+          }
+          return { ...action, territories: Array.from(currentTerritories) };
+        }
+        return action;
+      }));
     }
   };
 
@@ -701,11 +771,12 @@ export default function App() {
           onPointerLeave={handlePointerUp}
           onDblClick={handleDblClick}
           onDblTap={handleDblClick}
+          onContextMenu={(e) => e.evt.preventDefault()}
           scaleX={scale}
           scaleY={scale}
           x={position.x}
           y={position.y}
-          draggable={!(setupPhase === 'draw' || isPaintingMode)}
+          draggable={!(setupPhase === 'draw' || isPaintingMode || treatySelectMode !== null)}
           onDragMove={(e) => {
             if (e.target === e.target.getStage()) {
               e.target.x(Math.round(e.target.x()));
@@ -801,6 +872,21 @@ export default function App() {
                     context.fill();
                   }
 
+                  // Draw Treaty Select Territories
+                  if (treatySelectMode) {
+                    const action = treatyActions.find(a => a.id === treatySelectMode.actionId);
+                    if (action && action.territories && action.territories.length > 0) {
+                      context.beginPath();
+                      context.fillStyle = 'rgba(255, 255, 0, 0.5)'; // Yellow semi-transparent
+                      action.territories.forEach(idx => {
+                        const x = idx % gridSize.w;
+                        const y = Math.floor(idx / gridSize.w);
+                        context.rect(x, y, 1, 1);
+                      });
+                      context.fill();
+                    }
+                  }
+
                   // Draw Pending Paints
                   if (myNation && pendingPaints.length > 0) {
                     const myUnion = unions.find(u => u.members.includes(myNation.id));
@@ -894,72 +980,75 @@ export default function App() {
                 <Group key={battle.id} x={battle.x} y={battle.y}>
                   {/* Background with shadow and stroke */}
                   <Rect 
-                    x={-80 / scale} y={-45 / scale} 
-                    width={160 / scale} height={100 / scale} 
-                    fill="#1e1e24" 
-                    cornerRadius={12 / scale} 
-                    stroke="#333" 
+                    x={-90 / scale} y={-55 / scale} 
+                    width={180 / scale} height={110 / scale} 
+                    fill="#111118" 
+                    cornerRadius={8 / scale} 
+                    stroke={battle.status === 'finished' ? (battle.winnerId === 'draw' ? '#eab308' : '#22c55e') : '#ef4444'} 
                     strokeWidth={2 / scale}
                     shadowColor="black"
-                    shadowBlur={10 / scale}
-                    shadowOpacity={0.5}
-                    shadowOffsetY={5 / scale}
+                    shadowBlur={15 / scale}
+                    shadowOpacity={0.8}
+                    shadowOffsetY={8 / scale}
                   />
                   
                   {/* Header/Title area */}
                   <Rect 
-                    x={-80 / scale} y={-45 / scale} 
-                    width={160 / scale} height={20 / scale} 
-                    fill="#2a2a35" 
-                    cornerRadius={[12 / scale, 12 / scale, 0, 0]} 
+                    x={-90 / scale} y={-55 / scale} 
+                    width={180 / scale} height={24 / scale} 
+                    fill={battle.status === 'finished' ? (battle.winnerId === 'draw' ? '#eab30833' : '#22c55e33') : '#ef444433'} 
+                    cornerRadius={[8 / scale, 8 / scale, 0, 0]} 
                   />
                   <Text 
-                    text={battle.warId === 'colonization' ? "Колонизация" : "Битва"} 
-                    fill="#aaa" width={160 / scale} x={-80 / scale} align="center" y={-40 / scale} fontSize={10 / scale} fontStyle="bold" 
+                    text={battle.warId === 'colonization' ? "COLONIZATION" : "BATTLE"} 
+                    fill={battle.status === 'finished' ? (battle.winnerId === 'draw' ? '#facc15' : '#4ade80') : '#f87171'} 
+                    width={180 / scale} x={-90 / scale} align="center" y={-48 / scale} fontSize={10 / scale} fontStyle="bold" tracking={2 / scale}
                   />
 
                   {/* Attacker */}
-                  <Group x={-70 / scale} y={-15 / scale} onClick={handleAttackerClick} onTap={handleAttackerClick}>
-                    <Text text={attName} fill="white" width={60 / scale} align="center" y={-8 / scale} fontSize={10 / scale} fontStyle="bold" />
+                  <Group x={-80 / scale} y={-20 / scale} onClick={handleAttackerClick} onTap={handleAttackerClick}>
+                    <Text text={attName} fill="#e2e8f0" width={70 / scale} align="center" y={-10 / scale} fontSize={10 / scale} fontStyle="bold" />
                     <Rect 
-                      y={8 / scale}
-                      width={60 / scale} height={35 / scale} 
-                      fill={battle.status === 'finished' ? (battle.winnerId === battle.attackerId ? "#22c55e" : "#4b5563") : (isAttackerReady ? "#eab308" : "#ef4444")} 
-                      cornerRadius={6 / scale} 
-                      shadowColor="black" shadowBlur={4 / scale} shadowOpacity={0.3} shadowOffsetY={2 / scale}
+                      y={6 / scale}
+                      width={70 / scale} height={36 / scale} 
+                      fill={battle.status === 'finished' ? (battle.winnerId === battle.attackerId ? "#166534" : "#334155") : (isAttackerReady ? "#ca8a04" : "#991b1b")} 
+                      cornerRadius={4 / scale} 
+                      stroke={battle.status === 'finished' ? (battle.winnerId === battle.attackerId ? "#22c55e" : "#475569") : (isAttackerReady ? "#facc15" : "#ef4444")}
+                      strokeWidth={1 / scale}
                     />
                     <Text 
-                      text={battle.status === 'finished' ? String(battle.attackerRoll) : (isAttackerReady ? "ГОТОВ" : "НАЧАТЬ")} 
-                      fill="white" width={60 / scale} align="center" y={20 / scale} fontSize={11 / scale} fontStyle="bold" 
+                      text={battle.status === 'finished' ? String(battle.attackerRoll) : (isAttackerReady ? "READY" : "ROLL")} 
+                      fill="white" width={70 / scale} align="center" y={18 / scale} fontSize={12 / scale} fontStyle="bold" 
                     />
                   </Group>
 
                   {/* VS Badge */}
-                  <Circle x={0} y={10 / scale} radius={12 / scale} fill="#3b82f6" shadowColor="black" shadowBlur={4 / scale} shadowOpacity={0.4} />
-                  <Text text="VS" fill="white" x={-10 / scale} y={5 / scale} width={20 / scale} align="center" fontSize={10 / scale} fontStyle="bold" />
+                  <Circle x={0} y={10 / scale} radius={14 / scale} fill="#1e293b" stroke="#334155" strokeWidth={2 / scale} />
+                  <Text text="VS" fill="#94a3b8" x={-10 / scale} y={5 / scale} width={20 / scale} align="center" fontSize={10 / scale} fontStyle="bold" />
 
                   {/* Defender */}
-                  <Group x={10 / scale} y={-15 / scale} onClick={handleDefenderClick} onTap={handleDefenderClick}>
-                    <Text text={defName} fill="white" width={60 / scale} align="center" y={-8 / scale} fontSize={10 / scale} fontStyle="bold" />
+                  <Group x={10 / scale} y={-20 / scale} onClick={handleDefenderClick} onTap={handleDefenderClick}>
+                    <Text text={defName} fill="#e2e8f0" width={70 / scale} align="center" y={-10 / scale} fontSize={10 / scale} fontStyle="bold" />
                     <Rect 
-                      y={8 / scale}
-                      width={60 / scale} height={35 / scale} 
-                      fill={battle.status === 'finished' ? (battle.winnerId === battle.defenderId ? "#22c55e" : "#4b5563") : (isDefenderReady ? "#eab308" : "#3b82f6")} 
-                      cornerRadius={6 / scale} 
-                      shadowColor="black" shadowBlur={4 / scale} shadowOpacity={0.3} shadowOffsetY={2 / scale}
+                      y={6 / scale}
+                      width={70 / scale} height={36 / scale} 
+                      fill={battle.status === 'finished' ? (battle.winnerId === battle.defenderId ? "#166534" : "#334155") : (isDefenderReady ? "#ca8a04" : "#1d4ed8")} 
+                      cornerRadius={4 / scale} 
+                      stroke={battle.status === 'finished' ? (battle.winnerId === battle.defenderId ? "#22c55e" : "#475569") : (isDefenderReady ? "#facc15" : "#3b82f6")}
+                      strokeWidth={1 / scale}
                     />
                     <Text 
-                      text={battle.status === 'finished' ? String(battle.defenderRoll) : (isDefenderReady ? "ГОТОВ" : "НАЧАТЬ")} 
-                      fill="white" width={60 / scale} align="center" y={20 / scale} fontSize={11 / scale} fontStyle="bold" 
+                      text={battle.status === 'finished' ? String(battle.defenderRoll) : (isDefenderReady ? "READY" : "ROLL")} 
+                      fill="white" width={70 / scale} align="center" y={18 / scale} fontSize={12 / scale} fontStyle="bold" 
                     />
                   </Group>
 
                   {/* Result Text */}
                   {battle.status === 'finished' && (
                     <Text 
-                      text={battle.winnerId === 'draw' ? 'Ничья' : (battle.winnerId === battle.attackerId ? `Победа: ${attName}` : `Победа: ${defName}`)} 
+                      text={battle.winnerId === 'draw' ? 'DRAW' : (battle.winnerId === battle.attackerId ? `VICTORY: ${attName}` : `VICTORY: ${defName}`)} 
                       fill={battle.winnerId === 'draw' ? '#facc15' : '#4ade80'} 
-                      width={160 / scale} x={-80 / scale} align="center" y={40 / scale} fontSize={11 / scale} fontStyle="bold" 
+                      width={180 / scale} x={-90 / scale} align="center" y={38 / scale} fontSize={10 / scale} fontStyle="bold" 
                     />
                   )}
                 </Group>
@@ -982,7 +1071,7 @@ export default function App() {
               </div>
               
               <button 
-                onClick={() => { setShowAlliances(!showAlliances); setShowUN(false); setShowUnions(false); setShowNationSettings(false); setShowWars(false); }}
+                onClick={() => { setShowAlliances(!showAlliances); setShowUN(false); setShowUnions(false); setShowNationSettings(false); setShowWars(false); setShowTreaties(false); }}
                 className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showAlliances ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
               >
                 <Globe className="w-5 h-5 text-purple-400" />
@@ -993,7 +1082,7 @@ export default function App() {
               </button>
 
               <button 
-                onClick={() => { setShowUN(!showUN); setShowAlliances(false); setShowUnions(false); setShowNationSettings(false); setShowWars(false); }}
+                onClick={() => { setShowUN(!showUN); setShowAlliances(false); setShowUnions(false); setShowNationSettings(false); setShowWars(false); setShowTreaties(false); }}
                 className={`bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showUN ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
               >
                 <Landmark className="w-5 h-5 text-blue-400" />
@@ -1001,7 +1090,7 @@ export default function App() {
               </button>
 
               <button 
-                onClick={() => { setShowUnions(!showUnions); setShowAlliances(false); setShowUN(false); setShowNationSettings(false); setShowWars(false); }}
+                onClick={() => { setShowUnions(!showUnions); setShowAlliances(false); setShowUN(false); setShowNationSettings(false); setShowWars(false); setShowTreaties(false); }}
                 className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showUnions ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
               >
                 <Shield className="w-5 h-5 text-green-400" />
@@ -1012,7 +1101,7 @@ export default function App() {
               </button>
 
               <button 
-                onClick={() => { setShowWars(!showWars); setShowAlliances(false); setShowUN(false); setShowUnions(false); setShowNationSettings(false); }}
+                onClick={() => { setShowWars(!showWars); setShowAlliances(false); setShowUN(false); setShowUnions(false); setShowNationSettings(false); setShowTreaties(false); }}
                 className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showWars ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
               >
                 <Swords className="w-5 h-5 text-red-400" />
@@ -1020,6 +1109,14 @@ export default function App() {
                 {wars.length > 0 && (
                   <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-black text-[9px] flex items-center justify-center font-bold">{wars.length}</span>
                 )}
+              </button>
+
+              <button 
+                onClick={() => { setShowTreaties(!showTreaties); setShowWars(false); setShowAlliances(false); setShowUN(false); setShowUnions(false); setShowNationSettings(false); }}
+                className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showTreaties ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
+              >
+                <ScrollText className="w-5 h-5 text-yellow-400" />
+                <span className="font-bold text-sm">Treaties</span>
               </button>
 
               {(activeBattleId || proposingPeace) && (
@@ -1235,6 +1332,408 @@ export default function App() {
                   </button>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Treaties Panel */}
+        {showTreaties && (
+          <div className="absolute top-20 left-1/2 -translate-x-1/2 w-[600px] bg-black/90 backdrop-blur-xl border border-yellow-500/30 rounded-xl pointer-events-auto shadow-2xl overflow-hidden flex flex-col max-h-[70vh]">
+            <div className="flex items-center justify-between p-4 border-b border-yellow-500/20 bg-yellow-900/10">
+              <h2 className="text-xl font-bold flex items-center gap-2 text-yellow-400"><ScrollText className="w-5 h-5"/> Treaties</h2>
+              <button onClick={() => setShowTreaties(false)} className="text-gray-400 hover:text-white"><X className="w-5 h-5"/></button>
+            </div>
+            
+            <div className="flex border-b border-white/10">
+              <button 
+                onClick={() => setTreatyView('list')} 
+                className={`flex-1 py-2 text-sm font-bold ${treatyView === 'list' ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5'}`}
+              >
+                Active Treaties
+              </button>
+              <button 
+                onClick={() => setTreatyView('create')} 
+                className={`flex-1 py-2 text-sm font-bold ${treatyView === 'create' ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5'}`}
+              >
+                Create Treaty
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {treatyView === 'list' && (
+                <div className="space-y-4">
+                  {treaties.length === 0 ? (
+                    <div className="text-center text-gray-500 py-8">No active treaties</div>
+                  ) : (
+                    treaties.map(treaty => {
+                      const creator = getEntity(treaty.creatorId);
+                      return (
+                        <div key={treaty.id} className="bg-white/5 border border-white/10 rounded-lg p-4">
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <h3 className="font-bold text-lg text-yellow-400">{treaty.name}</h3>
+                              <div className="text-xs text-gray-400">Created by {creator?.name}</div>
+                            </div>
+                            <div className="text-xs font-bold px-2 py-1 rounded bg-yellow-500/20 text-yellow-300">
+                              {treaty.status.toUpperCase()}
+                            </div>
+                          </div>
+                          
+                          <div className="text-sm text-gray-300 mb-4 whitespace-pre-wrap">
+                            {treaty.text}
+                          </div>
+
+                          {treaty.conditions.length > 0 && (
+                            <div className="mb-4">
+                              <h4 className="text-xs font-bold text-gray-400 mb-1 uppercase">Conditions</h4>
+                              <div className="space-y-1">
+                                {treaty.conditions.map(c => (
+                                  <div key={c.id} className="text-xs bg-purple-500/10 border border-purple-500/20 text-purple-300 px-2 py-1 rounded">
+                                    <span className="font-bold mr-1">[{c.type.replace('_', ' ').toUpperCase()}]</span>
+                                    {c.description}
+                                    {c.type === 'timer' && c.duration && (
+                                      <span className="ml-2 text-gray-400">
+                                        ({c.duration / 1000} seconds)
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {treaty.actions.length > 0 && (
+                            <div className="mb-4">
+                              <h4 className="text-xs font-bold text-gray-400 mb-1 uppercase">Actions</h4>
+                              <div className="space-y-1">
+                                {treaty.actions.map(a => (
+                                  <div key={a.id} className="text-xs bg-yellow-500/10 border border-yellow-500/20 text-yellow-300 px-2 py-1 rounded">
+                                    <span className="font-bold mr-1">[{a.type.replace('_', ' ').toUpperCase()}]</span>
+                                    {a.description}
+                                    {a.type === 'transfer_land' && a.targetId && (
+                                      <span className="ml-2 text-gray-400">
+                                        (To: {getEntity(a.targetId)?.name}, {a.territories?.length || 0} territories)
+                                      </span>
+                                    )}
+                                    {a.type === 'create_nation' && a.newNationName && (
+                                      <span className="ml-2 text-gray-400">
+                                        (Name: {a.newNationName}, {a.territories?.length || 0} territories)
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          
+                          <div className="flex flex-wrap gap-2 mb-4">
+                            {treaty.participants.map(pId => {
+                              const p = getEntity(pId);
+                              const hasSigned = treaty.agreements.includes(pId);
+                              return (
+                                <div key={pId} className={`text-xs px-2 py-1 rounded border flex items-center gap-1 ${hasSigned ? 'bg-green-500/20 border-green-500/30 text-green-300' : 'bg-gray-500/20 border-gray-500/30 text-gray-300'}`}>
+                                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: p?.color }}></div>
+                                  {p?.name} {hasSigned && '✓'}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          
+                          {myDiplomaticEntity && (
+                            <div className="flex gap-2">
+                              {treaty.status === 'draft' && treaty.participants.includes(myDiplomaticEntity.id) && !treaty.agreements.includes(myDiplomaticEntity.id) && (
+                                <button
+                                  onClick={() => signTreaty(treaty.id)}
+                                  className="px-3 py-1 bg-green-600 hover:bg-green-500 text-white text-sm font-bold rounded"
+                                >
+                                  Sign Treaty
+                                </button>
+                              )}
+                              {treaty.status === 'draft' && !treaty.participants.includes(myDiplomaticEntity.id) && (treaty.isPublic || treaty.invited.includes(myDiplomaticEntity.id)) && (
+                                <button
+                                  onClick={() => joinTreaty(treaty.id)}
+                                  className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded"
+                                >
+                                  Join Treaty
+                                </button>
+                              )}
+                              {treaty.status === 'active' && treaty.participants.includes(myDiplomaticEntity.id) && (
+                                <button
+                                  onClick={() => denounceTreaty(treaty.id)}
+                                  className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white text-sm font-bold rounded"
+                                >
+                                  Denounce Treaty
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+
+              {treatyView === 'create' && myDiplomaticEntity && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-bold text-gray-400 mb-1">Treaty Name</label>
+                    <input 
+                      type="text" 
+                      id="treatyName"
+                      className="w-full bg-black/50 border border-white/10 rounded p-2 text-white"
+                      placeholder="e.g. Treaty of Versailles"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-bold text-gray-400 mb-1">Treaty Text / Terms</label>
+                    <textarea 
+                      id="treatyText"
+                      className="w-full bg-black/50 border border-white/10 rounded p-2 text-white h-32"
+                      placeholder="Describe the terms of the treaty..."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold text-gray-400 mb-1">Invite Participants</label>
+                    <div className="flex gap-2 mb-2">
+                      <select id="treatyInviteSelect" className="flex-1 bg-black/50 border border-white/10 rounded p-2 text-white">
+                        <option value="">Select a nation/alliance...</option>
+                        {nations.filter(n => n.id !== myDiplomaticEntity?.id).map(n => (
+                          <option key={n.id} value={n.id}>{n.name}</option>
+                        ))}
+                        {alliances.filter(a => a.id !== myDiplomaticEntity?.id).map(a => (
+                          <option key={a.id} value={a.id}>{a.name} (Alliance)</option>
+                        ))}
+                      </select>
+                      <button 
+                        onClick={() => {
+                          const val = (document.getElementById('treatyInviteSelect') as HTMLSelectElement).value;
+                          if (val && !treatyInvited.includes(val)) {
+                            setTreatyInvited([...treatyInvited, val]);
+                          }
+                        }}
+                        className="px-4 bg-blue-600 hover:bg-blue-500 rounded font-bold"
+                      >
+                        Add
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {treatyInvited.map(id => {
+                        const entity = getEntity(id);
+                        return (
+                          <div key={id} className="bg-white/10 px-2 py-1 rounded text-sm flex items-center gap-2">
+                            {entity?.name}
+                            <button onClick={() => setTreatyInvited(treatyInvited.filter(i => i !== id))} className="text-red-400 hover:text-red-300">×</button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold text-gray-400 mb-1">Actions (Constructor)</label>
+                    <div className="flex gap-2 mb-2">
+                      <select id="treatyActionSelect" className="flex-1 bg-black/50 border border-white/10 rounded p-2 text-white">
+                        <option value="transfer_land">Transfer Land</option>
+                        <option value="demilitarized_zone">Create Demilitarized Zone</option>
+                        <option value="create_nation">Create New Nation</option>
+                        <option value="resource_help">Resource Aid</option>
+                        <option value="custom">Custom Action</option>
+                      </select>
+                      <input 
+                        type="text" 
+                        placeholder="Description..." 
+                        value={treatyActionDesc}
+                        onChange={(e) => setTreatyActionDesc(e.target.value)}
+                        className="flex-1 bg-black/50 border border-white/10 rounded p-2 text-white"
+                      />
+                      <button 
+                        onClick={() => {
+                          const type = (document.getElementById('treatyActionSelect') as HTMLSelectElement).value as any;
+                          if (treatyActionDesc.trim()) {
+                            setTreatyActions([...treatyActions, { id: Math.random().toString(), type, description: treatyActionDesc.trim() }]);
+                            setTreatyActionDesc('');
+                          }
+                        }}
+                        className="px-4 bg-yellow-600 hover:bg-yellow-500 rounded font-bold"
+                      >
+                        Add Action
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {treatyActions.map(action => (
+                        <div key={action.id} className="bg-white/5 border border-white/10 p-2 rounded text-sm flex flex-col gap-2">
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <span className="font-bold text-yellow-400 mr-2">[{action.type.replace('_', ' ').toUpperCase()}]</span>
+                              {action.description}
+                            </div>
+                            <button onClick={() => setTreatyActions(treatyActions.filter(a => a.id !== action.id))} className="text-red-400 hover:text-red-300">×</button>
+                          </div>
+                          
+                          {action.type === 'transfer_land' && (
+                            <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-white/10">
+                              <div className="flex items-center gap-2">
+                                <span className="text-gray-400">Target (Receiver):</span>
+                                <select 
+                                  className="bg-black/50 border border-white/10 rounded px-2 py-1 flex-1"
+                                  value={action.targetId || ''}
+                                  onChange={(e) => {
+                                    setTreatyActions(prev => prev.map(a => a.id === action.id ? { ...a, targetId: e.target.value } : a));
+                                  }}
+                                >
+                                  <option value="">Select Target...</option>
+                                  {nations.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+                                  {alliances.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                </select>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-400">Territories: {action.territories?.length || 0} selected</span>
+                                <button 
+                                  onClick={() => {
+                                    if (treatySelectMode?.actionId === action.id) {
+                                      setTreatySelectMode(null);
+                                    } else {
+                                      setTreatySelectMode({ actionId: action.id, type: 'transfer_land' });
+                                    }
+                                  }}
+                                  className={`px-3 py-1 rounded text-xs font-bold ${treatySelectMode?.actionId === action.id ? 'bg-yellow-500 text-black' : 'bg-white/10 hover:bg-white/20'}`}
+                                >
+                                  {treatySelectMode?.actionId === action.id ? 'Done Selecting' : 'Select on Map'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          
+                          {action.type === 'create_nation' && (
+                            <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-white/10">
+                              <div className="flex items-center gap-2">
+                                <input 
+                                  type="text" 
+                                  placeholder="New Nation Name" 
+                                  className="bg-black/50 border border-white/10 rounded px-2 py-1 flex-1"
+                                  value={action.newNationName || ''}
+                                  onChange={(e) => setTreatyActions(prev => prev.map(a => a.id === action.id ? { ...a, newNationName: e.target.value } : a))}
+                                />
+                                <input 
+                                  type="color" 
+                                  className="w-8 h-8 rounded cursor-pointer"
+                                  value={action.newNationColor || '#ffffff'}
+                                  onChange={(e) => setTreatyActions(prev => prev.map(a => a.id === action.id ? { ...a, newNationColor: e.target.value } : a))}
+                                />
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-400">Territories: {action.territories?.length || 0} selected</span>
+                                <button 
+                                  onClick={() => {
+                                    if (treatySelectMode?.actionId === action.id) {
+                                      setTreatySelectMode(null);
+                                    } else {
+                                      setTreatySelectMode({ actionId: action.id, type: 'create_nation' });
+                                    }
+                                  }}
+                                  className={`px-3 py-1 rounded text-xs font-bold ${treatySelectMode?.actionId === action.id ? 'bg-yellow-500 text-black' : 'bg-white/10 hover:bg-white/20'}`}
+                                >
+                                  {treatySelectMode?.actionId === action.id ? 'Done Selecting' : 'Select on Map'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold text-gray-400 mb-1">Conditions (Constructor)</label>
+                    <div className="flex gap-2 mb-2">
+                      <select id="treatyConditionSelect" className="flex-1 bg-black/50 border border-white/10 rounded p-2 text-white">
+                        <option value="timer">Timer / Duration</option>
+                        <option value="multi_join">Multi-Entry (Anyone can join)</option>
+                        <option value="custom">Custom Condition</option>
+                      </select>
+                      <input 
+                        type="text" 
+                        placeholder="Description..." 
+                        value={treatyConditionDesc}
+                        onChange={(e) => setTreatyConditionDesc(e.target.value)}
+                        className="flex-1 bg-black/50 border border-white/10 rounded p-2 text-white"
+                      />
+                      <button 
+                        onClick={() => {
+                          const type = (document.getElementById('treatyConditionSelect') as HTMLSelectElement).value as any;
+                          if (treatyConditionDesc.trim()) {
+                            setTreatyConditions([...treatyConditions, { id: Math.random().toString(), type, description: treatyConditionDesc.trim() }]);
+                            setTreatyConditionDesc('');
+                          }
+                        }}
+                        className="px-4 bg-purple-600 hover:bg-purple-500 rounded font-bold"
+                      >
+                        Add Condition
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {treatyConditions.map(cond => (
+                        <div key={cond.id} className="bg-white/5 border border-white/10 p-2 rounded text-sm flex flex-col gap-2">
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <span className="font-bold text-purple-400 mr-2">[{cond.type.replace('_', ' ').toUpperCase()}]</span>
+                              {cond.description}
+                            </div>
+                            <button onClick={() => setTreatyConditions(treatyConditions.filter(c => c.id !== cond.id))} className="text-red-400 hover:text-red-300">×</button>
+                          </div>
+                          
+                          {cond.type === 'timer' && (
+                            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/10">
+                              <span className="text-gray-400">Duration (seconds):</span>
+                              <input 
+                                type="number" 
+                                className="bg-black/50 border border-white/10 rounded px-2 py-1 w-24"
+                                value={cond.duration ? cond.duration / 1000 : ''}
+                                onChange={(e) => setTreatyConditions(prev => prev.map(c => c.id === cond.id ? { ...c, duration: parseInt(e.target.value) * 1000 } : c))}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="treatyPublic" className="w-4 h-4" />
+                    <label htmlFor="treatyPublic" className="text-sm text-gray-300">Public (Anyone can join without invite)</label>
+                  </div>
+                  
+                  <button 
+                    onClick={() => {
+                      const name = (document.getElementById('treatyName') as HTMLInputElement).value;
+                      const text = (document.getElementById('treatyText') as HTMLTextAreaElement).value;
+                      const isPublic = (document.getElementById('treatyPublic') as HTMLInputElement).checked;
+                      
+                      if (!name) return alert('Please enter a name');
+                      
+                      createTreaty({
+                        name,
+                        text,
+                        isPublic,
+                        invited: treatyInvited,
+                        actions: treatyActions,
+                        conditions: treatyConditions
+                      });
+                      
+                      setTreatyActions([]);
+                      setTreatyConditions([]);
+                      setTreatyInvited([]);
+                      setTreatyView('list');
+                    }}
+                    className="w-full py-2 bg-yellow-600 hover:bg-yellow-500 text-white font-bold rounded-lg"
+                  >
+                    Create Draft
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1464,6 +1963,8 @@ export default function App() {
                           <button 
                             onClick={() => {
                               setProposingPeace(war.id);
+                              setIsPaintingMode(true);
+                              setIsRollMode(false);
                               setPeaceClaims({});
                               setPeacePuppets({});
                               setShowWars(false); // Hide UI to paint claims
@@ -1471,6 +1972,14 @@ export default function App() {
                             className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded transition-colors"
                           >
                             Propose Peace
+                          </button>
+                          <button 
+                            onClick={() => {
+                              proposePeaceTreaty(war.id, {}, {});
+                            }}
+                            className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded transition-colors"
+                          >
+                            Status Quo
                           </button>
                         </div>
                       )}
@@ -1644,6 +2153,7 @@ export default function App() {
                 onClick={() => {
                   proposePeaceTreaty(proposingPeace, peaceClaims, peacePuppets);
                   setProposingPeace(null);
+                  setIsPaintingMode(false);
                   setPeaceClaims({});
                   setPeacePuppets({});
                 }} 
@@ -1653,7 +2163,20 @@ export default function App() {
               </button>
               <button 
                 onClick={() => {
+                  proposePeaceTreaty(proposingPeace, {}, {});
                   setProposingPeace(null);
+                  setIsPaintingMode(false);
+                  setPeaceClaims({});
+                  setPeacePuppets({});
+                }} 
+                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1 rounded"
+              >
+                Status Quo
+              </button>
+              <button 
+                onClick={() => {
+                  setProposingPeace(null);
+                  setIsPaintingMode(false);
                   setPeaceClaims({});
                   setPeacePuppets({});
                 }} 
