@@ -211,7 +211,6 @@ export default function App() {
   const [landGrid, setLandGrid] = useState<Uint8Array | null>(null);
   const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null);
   const [isPainting, setIsPainting] = useState(false);
-  const alreadySentRef = useRef<Set<number>>(new Set());
 
   // Memoize claimed territories for fast collision detection
   const claimedSet = useMemo(() => {
@@ -416,11 +415,6 @@ export default function App() {
     }
   }, [wars, colonizationBattles, myDiplomaticEntity, activeBattleId]);
 
-  useEffect(() => {
-    alreadySentRef.current.clear();
-    setPendingPaints([]);
-  }, [activeBattleId]);
-
   const paintCell = (e: any) => {
     if (!landGrid || gridSize.w === 0) return;
     const stage = e.target.getStage();
@@ -461,33 +455,42 @@ export default function App() {
           return added ? Array.from(currentSet) : prev;
         });
       } else if (activeBattleId && myDiplomaticEntity) {
-        // Painting battle result — send immediately to server on each stroke
+        // Painting battle result
         const war = wars.find(w => w.battles.some(b => b.id === activeBattleId));
         if (war) {
           const battle = war.battles.find(b => b.id === activeBattleId);
           if (battle && battle.status === 'finished' && battle.winnerId === myDiplomaticEntity.id && battle.pixelsToPaint && battle.pixelsToPaint > 0) {
-            const loserId = battle.winnerId === battle.attackerId ? battle.defenderId : battle.attackerId;
+            // Send painted pixels to server
+            // To avoid sending too many requests, we could batch them, but for simplicity we'll send them directly if they are not already owned by us
             const validIndices = newIndices.filter(idx => {
               const currentOwner = nations.find(n => n.territories.includes(idx));
               const currentOwnerEntity = currentOwner ? (unions.find(u => u.members.includes(currentOwner.id))?.id || currentOwner.id) : null;
+              
               const currentOccupier = nations.find(n => n.occupations?.includes(idx));
               const currentOccupierEntity = currentOccupier ? (unions.find(u => u.members.includes(currentOccupier.id))?.id || currentOccupier.id) : null;
+
+              const loserId = battle.winnerId === battle.attackerId ? battle.defenderId : battle.attackerId;
+              
               return currentOwnerEntity === loserId || currentOccupierEntity === loserId;
             });
-            const remaining = battle.pixelsToPaint - alreadySentRef.current.size;
-            const toSend = validIndices.filter(idx => !alreadySentRef.current.has(idx)).slice(0, Math.max(0, remaining));
-            if (toSend.length > 0) {
-              toSend.forEach(idx => alreadySentRef.current.add(idx));
-              paintBattleResult(war.id, battle.id, toSend);
+            
+            if (validIndices.length > 0) {
               setPendingPaints(prev => {
-                const s = new Set(prev);
-                toSend.forEach(idx => s.add(idx));
-                return Array.from(s);
+                const currentSet = new Set(prev);
+                let added = false;
+                for (const idx of validIndices) {
+                  if (currentSet.size >= battle.pixelsToPaint) break;
+                  if (!currentSet.has(idx)) {
+                    currentSet.add(idx);
+                    added = true;
+                  }
+                }
+                return added ? Array.from(currentSet) : prev;
               });
             }
           }
         } else {
-          // Colonization battle
+          // Check if it's a colonization battle
           const colBattle = colonizationBattles.find(b => b.id === activeBattleId);
           if (colBattle && colBattle.status === 'finished' && colBattle.winnerId === myDiplomaticEntity.id && colBattle.pixelsToPaint && colBattle.pixelsToPaint > 0) {
             const validIndices = newIndices.filter(idx => {
@@ -495,15 +498,19 @@ export default function App() {
               const currentOccupier = nations.find(n => n.occupations?.includes(idx));
               return !currentOwner && !currentOccupier;
             });
-            const remaining = colBattle.pixelsToPaint - alreadySentRef.current.size;
-            const toSend = validIndices.filter(idx => !alreadySentRef.current.has(idx)).slice(0, Math.max(0, remaining));
-            if (toSend.length > 0) {
-              toSend.forEach(idx => alreadySentRef.current.add(idx));
-              paintColonizationResult(colBattle.id, toSend);
+            
+            if (validIndices.length > 0) {
               setPendingPaints(prev => {
-                const s = new Set(prev);
-                toSend.forEach(idx => s.add(idx));
-                return Array.from(s);
+                const currentSet = new Set(prev);
+                let added = false;
+                for (const idx of validIndices) {
+                  if (currentSet.size >= colBattle.pixelsToPaint) break;
+                  if (!currentSet.has(idx)) {
+                    currentSet.add(idx);
+                    added = true;
+                  }
+                }
+                return added ? Array.from(currentSet) : prev;
               });
             }
           }
@@ -654,6 +661,22 @@ export default function App() {
 
   const handlePointerUp = () => {
     setIsPainting(false);
+    if (pendingPaints.length > 0 && myDiplomaticEntity) {
+      if (activeBattleId) {
+        const war = wars.find(w => w.battles.some(b => b.id === activeBattleId));
+        if (war) {
+          paintBattleResult(war.id, activeBattleId, pendingPaints);
+        } else {
+          const colBattle = colonizationBattles.find(b => b.id === activeBattleId);
+          if (colBattle) {
+            paintColonizationResult(colBattle.id, pendingPaints);
+          }
+        }
+      } else if (isPaintingMode) {
+        socket?.emit('captureLands', { indices: pendingPaints });
+      }
+      setPendingPaints([]);
+    }
   };
 
   const handleChatSubmit = (e: React.FormEvent) => {
@@ -731,15 +754,21 @@ export default function App() {
                     context.fill();
                   });
 
-                  // Draw Occupations - use the occupier's actual color with dark diagonal stripes
+                  // Draw Occupations
                   nations.forEach(nation => {
                     if (!nation.occupations || nation.occupations.length === 0) return;
                     const union = unions.find(u => u.members.includes(nation.id));
                     const baseColor = union ? union.color : nation.color;
+                    
+                    // Lighten the color
+                    const r = parseInt(baseColor.slice(1, 3), 16);
+                    const g = parseInt(baseColor.slice(3, 5), 16);
+                    const b = parseInt(baseColor.slice(5, 7), 16);
+                    const lightColor = `rgba(${Math.min(255, r + 100)}, ${Math.min(255, g + 100)}, ${Math.min(255, b + 100)}, 0.8)`;
+                    const darkColor = `rgba(${Math.max(0, r - 50)}, ${Math.max(0, g - 50)}, ${Math.max(0, b - 50)}, 0.8)`;
 
-                    // Draw solid base in the occupier's actual color
                     context.beginPath();
-                    context.fillStyle = baseColor;
+                    context.fillStyle = lightColor;
                     nation.occupations.forEach(idx => {
                       const x = idx % gridSize.w;
                       const y = Math.floor(idx / gridSize.w);
@@ -747,9 +776,9 @@ export default function App() {
                     });
                     context.fill();
 
-                    // Overlay dark diagonal stripes to visually distinguish from owned territory
+                    // Draw dark diagonals
                     context.beginPath();
-                    context.fillStyle = 'rgba(0, 0, 0, 0.45)';
+                    context.fillStyle = darkColor;
                     nation.occupations.forEach(idx => {
                       const x = idx % gridSize.w;
                       const y = Math.floor(idx / gridSize.w);
@@ -928,16 +957,8 @@ export default function App() {
                   {/* Result Text */}
                   {battle.status === 'finished' && (
                     <Text 
-                      text={
-                        isAttacker ? (battle.attackerResultText || (battle.winnerId === 'draw' ? 'Ничья' : battle.winnerId === battle.attackerId ? 'Победа' : 'Поражение')) :
-                        isDefender ? (battle.defenderResultText || (battle.winnerId === 'draw' ? 'Ничья' : battle.winnerId === battle.defenderId ? 'Победа' : 'Поражение')) :
-                        (battle.winnerId === 'draw' ? 'Ничья' : battle.winnerId === battle.attackerId ? `Победа: ${attName}` : `Победа: ${defName}`)
-                      }
-                      fill={
-                        battle.winnerId === 'draw' ? '#facc15' :
-                        (isAttacker && battle.winnerId === battle.attackerId) || (isDefender && battle.winnerId === battle.defenderId) ? '#4ade80' :
-                        (isAttacker || isDefender) ? '#f87171' : '#4ade80'
-                      }
+                      text={battle.winnerId === 'draw' ? 'Ничья' : (battle.winnerId === battle.attackerId ? `Победа: ${attName}` : `Победа: ${defName}`)} 
+                      fill={battle.winnerId === 'draw' ? '#facc15' : '#4ade80'} 
                       width={160 / scale} x={-80 / scale} align="center" y={40 / scale} fontSize={11 / scale} fontStyle="bold" 
                     />
                   )}
@@ -1001,6 +1022,21 @@ export default function App() {
                 )}
               </button>
 
+              {(activeBattleId || proposingPeace) && (
+                <button 
+                  onClick={() => {
+                    setIsPaintingMode(!isPaintingMode);
+                    if (!isPaintingMode) {
+                      setIsRollMode(false);
+                      setPlacingBattle(null);
+                    }
+                  }} 
+                  className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${isPaintingMode ? 'bg-green-500/50 hover:bg-green-500/70' : 'hover:bg-gray-800/80'}`}
+                >
+                  <Crosshair className={`w-5 h-5 ${isPaintingMode ? 'text-white' : 'text-green-400'}`} /> 
+                  <span className="font-bold text-sm">{isPaintingMode ? 'Paint Mode' : 'Move Map'}</span>
+                </button>
+              )}
             </div>
 
             {/* News Feed - Always open under title */}
@@ -1413,31 +1449,29 @@ export default function App() {
                       </div>
 
                       {war.status === 'active' && isParticipant && (
-                        <div className="flex flex-col gap-2">
-                          <div className="flex gap-2">
-                            <button 
-                              onClick={() => {
-                                setPlacingBattle(war.id);
-                                setIsPaintingMode(false);
-                                setIsRollMode(false);
-                                setShowWars(false);
-                              }}
-                              className="flex-1 bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 px-4 rounded transition-colors"
-                            >
-                              Place Battle Marker
-                            </button>
-                            <button 
-                              onClick={() => {
-                                setProposingPeace(war.id);
-                                setPeaceClaims({});
-                                setPeacePuppets({});
-                                setShowWars(false);
-                              }}
-                              className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded transition-colors"
-                            >
-                              Propose Peace
-                            </button>
-                          </div>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => {
+                              setPlacingBattle(war.id);
+                              setIsPaintingMode(false);
+                              setIsRollMode(false);
+                              setShowWars(false); // Hide UI to place battle
+                            }}
+                            className="flex-1 bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 px-4 rounded transition-colors"
+                          >
+                            Place Battle Marker
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setProposingPeace(war.id);
+                              setPeaceClaims({});
+                              setPeacePuppets({});
+                              setShowWars(false); // Hide UI to paint claims
+                            }}
+                            className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded transition-colors"
+                          >
+                            Propose Peace
+                          </button>
                         </div>
                       )}
 
@@ -1633,10 +1667,10 @@ export default function App() {
 
         {/* Painting Battle Result Overlay */}
         {activeBattleId && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-3 rounded-full font-bold shadow-lg pointer-events-none flex items-center gap-4">
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-3 rounded-full font-bold shadow-lg pointer-events-auto flex items-center gap-4">
             <span>
-              🖌 Закрашивайте вражеские территории!
-              {' '}({wars.flatMap(w => w.battles).find(b => b.id === activeBattleId)?.pixelsToPaint || colonizationBattles.find(b => b.id === activeBattleId)?.pixelsToPaint || 0} пикс. осталось)
+              Paint your won territories! 
+              ({wars.flatMap(w => w.battles).find(b => b.id === activeBattleId)?.pixelsToPaint || colonizationBattles.find(b => b.id === activeBattleId)?.pixelsToPaint || 0} left)
             </span>
           </div>
         )}
