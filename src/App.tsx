@@ -1,13 +1,9 @@
+import { translations, TranslationKey, Language, tMapIdeology, tMapEconomy } from './i18n';
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Stage, Layer, Text, Image as KonvaImage, Shape, Group, Circle, Rect } from 'react-konva';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useGameStore } from './store';
-import { Settings, Users, Map as MapIcon, Shield, Check, ArrowLeft, MessageSquare, Upload, Image as ImageIcon, X, Search, Globe, Landmark, ChevronLeft, Star, Swords, Crosshair, Flag, Dices, ScrollText } from 'lucide-react';
-
-const IDEOLOGIES = [
-  'Communism', 'Fascism', 'Democracy', 'Anarcho-capitalism', 'Theocracy',
-  'Monarchy', 'Social Democracy', 'Technocracy', 'Oligarchy', 'Meritocracy',
-  'Feudalism', 'Tribalism', 'Corporatocracy', 'Eco-Socialism', 'Libertarianism',
-];
+import { Map as MapIcon, Shield, Check, ArrowLeft, MessageSquare, Upload, Image as ImageIcon, X, Search, Globe, Landmark, ChevronLeft, Star, Swords, Crosshair, Flag, Dices, Settings, Users } from 'lucide-react';
 
 const DEPENDENCY_STATUSES = ['Independent', 'Puppet', 'Autonomous Republic', 'Colony'];
 
@@ -88,8 +84,7 @@ export default function App() {
     news, allianceRequests, allianceChats, approveAllianceJoin, rejectAllianceJoin, sendAllianceChatMessage,
     unSessions, createUNSession, voteUNSession, updateNation, disbandNation, publishNews,
     wars, finishedWars, declareWar, joinWar, proposePeaceTreaty, agreePeaceTreaty, rejectPeaceTreaty, placeBattle, startBattle, paintBattleResult,
-    colonizationBattles, placeColonizationBattle, startColonizationBattle, paintColonizationResult,
-    treaties, createTreaty, joinTreaty, signTreaty, denounceTreaty
+    colonizationBattles, placeColonizationBattle, startColonizationBattle, paintColonizationResult
   } = useGameStore();
 
   const myDiplomaticEntity = useMemo(() => {
@@ -115,13 +110,10 @@ export default function App() {
     };
   }, [myNation, unions]);
 
-  const getEntity = (id: string) => {
-    return nations.find(n => n.id === id) || alliances.find(a => a.id === id) || unions.find(u => u.id === id);
-  };
-
   const [name, setName] = useState('');
   const [shortName, setShortName] = useState('');
-  const [ideology, setIdeology] = useState(IDEOLOGIES[0]);
+  const [ideology, setIdeology] = useState('');
+  const [description, setDescription] = useState('');
   const [targetNationId, setTargetNationId] = useState('');
   const [status, setStatus] = useState(DEPENDENCY_STATUSES[0]);
   const [color, setColor] = useState('#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0'));
@@ -142,9 +134,21 @@ export default function App() {
   const [newAllianceFlag, setNewAllianceFlag] = useState('');
   const [allianceChatInput, setAllianceChatInput] = useState('');
 
+  // Edit Alliance State
+  const [showAllianceSettings, setShowAllianceSettings] = useState(false);
+  const [editAllianceName, setEditAllianceName] = useState('');
+  const [editAllianceDesc, setEditAllianceDesc] = useState('');
+  const [editAllianceFlag, setEditAllianceFlag] = useState('');
+
   // News UI State
   const [showNews, setShowNews] = useState(false);
   
+  // City State
+  const [selectedTerritoryIdx, setSelectedTerritoryIdx] = useState<number | null>(null);
+  const [selectedCity, setSelectedCity] = useState<{ nationId: string, cityId: string } | null>(null);
+  const [newCityName, setNewCityName] = useState('');
+  const [showCityModal, setShowCityModal] = useState(false);
+
   // UN State
   const [showUN, setShowUN] = useState(false);
   const [unTopic, setUnTopic] = useState('');
@@ -156,22 +160,15 @@ export default function App() {
   const [warTargetId, setWarTargetId] = useState('');
   const [warReason, setWarReason] = useState('');
   
-  // Treaties State
-  const [showTreaties, setShowTreaties] = useState(false);
-  const [treatyView, setTreatyView] = useState<'list' | 'create' | 'details'>('list');
-  const [selectedTreatyId, setSelectedTreatyId] = useState<string | null>(null);
-  const [treatyActions, setTreatyActions] = useState<TreatyAction[]>([]);
-  const [treatyConditions, setTreatyConditions] = useState<TreatyCondition[]>([]);
-  const [treatyActionDesc, setTreatyActionDesc] = useState('');
-  const [treatyConditionDesc, setTreatyConditionDesc] = useState('');
-  const [treatyInvited, setTreatyInvited] = useState<string[]>([]);
-  const [treatySelectMode, setTreatySelectMode] = useState<{actionId: string, type: 'transfer_land' | 'create_nation'} | null>(null);
+  // Nation Info Tab
+  const [nationInfoTab, setNationInfoTab] = useState<'info' | 'lore' | 'politics'>('info');
   
   // Battle State
   const [placingBattle, setPlacingBattle] = useState<string | null>(null); // warId
   const [activeBattleId, setActiveBattleId] = useState<string | null>(null);
   const [isPaintingMode, setIsPaintingMode] = useState(false);
   const [isRollMode, setIsRollMode] = useState(false);
+  const [isCityMode, setIsCityMode] = useState(false);
   const [pendingPaints, setPendingPaints] = useState<number[]>([]);
   
   // Peace Treaty State
@@ -191,11 +188,19 @@ export default function App() {
 
   // Nation Settings State
   const [showNationSettings, setShowNationSettings] = useState(false);
+  const [nationSettingsTab, setNationSettingsTab] = useState<'general' | 'economy' | 'politics'>('general');
   const [editNationName, setEditNationName] = useState('');
   const [editNationShortName, setEditNationShortName] = useState('');
-  const [editNationIdeology, setEditNationIdeology] = useState(IDEOLOGIES[0]);
+  const [editNationIdeology, setEditNationIdeology] = useState('');
   const [editNationColor, setEditNationColor] = useState('#ffffff');
   const [editNationFlag, setEditNationFlag] = useState('');
+  const [editNationDescription, setEditNationDescription] = useState('');
+  const [editNationParties, setEditNationParties] = useState<any[]>([]);
+  const [newPartyName, setNewPartyName] = useState('');
+  const [newPartyColor, setNewPartyColor] = useState('#ff0000');
+  const [newPartyIdeology, setNewPartyIdeology] = useState('');
+  const [newPartyLeader, setNewPartyLeader] = useState('');
+  const [newPartyPercentage, setNewPartyPercentage] = useState<number>(10);
   const [confirmDisband, setConfirmDisband] = useState(false);
 
   // Union Settings State
@@ -208,6 +213,14 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   
   const [newsInput, setNewsInput] = useState('');
+
+  const [language, setLanguage] = useState<Language>(() => (localStorage.getItem('lang') as Language) || 'ru');
+  const [showSettings, setShowSettings] = useState(false);
+  
+  useEffect(() => { localStorage.setItem('lang', language); }, [language]);
+  
+  const t = (key: TranslationKey) => translations[language][key] || translations['en'][key] || key;
+  
   const [newsCooldown, setNewsCooldown] = useState(0);
 
   useEffect(() => {
@@ -244,7 +257,7 @@ export default function App() {
   useEffect(() => {
     if (socket) {
       const handleToast = () => {
-        setToast('Заявка отправлена!');
+        setToast(language === 'ru' ? 'Заявка отправлена!' : 'Request sent!');
         setTimeout(() => setToast(null), 3000);
       };
       socket.on('joinRequestSent', handleToast);
@@ -347,7 +360,7 @@ export default function App() {
 
   const handleConfirmSpawn = () => {
     if (draftTerritories.length === 0) return;
-    requestSpawn({ name, shortName, ideology, targetNationId, status, color, territories: draftTerritories, flag: flagUrl });
+    requestSpawn({ name, shortName, ideology, description, targetNationId, status, color, territories: draftTerritories, flag: flagUrl });
   };
 
   const processImageUpload = (file: File, callback: (url: string) => void) => {
@@ -600,9 +613,6 @@ export default function App() {
     if (setupPhase === 'draw' || isPaintingMode) {
       setIsPainting(true);
       paintCell(e);
-    } else if (treatySelectMode) {
-      setIsPainting(true);
-      selectTreatyCell(e);
     } else if (placingBattle && myDiplomaticEntity) {
       const stage = e.target.getStage();
       const point = stage.getPointerPosition();
@@ -640,6 +650,18 @@ export default function App() {
         placeColonizationBattle(x, y);
         setIsRollMode(false);
       }
+    } else if (isCityMode && myNation) {
+      const stage = e.target.getStage();
+      const point = stage.getPointerPosition();
+      const x = Math.floor((point.x - stage.x()) / stage.scaleX());
+      const y = Math.floor((point.y - stage.y()) / stage.scaleY());
+      const idx = y * gridSize.w + x;
+      
+      if (myNation.territories.includes(idx)) {
+        setSelectedTerritoryIdx(idx);
+        setShowCityModal(true);
+        setIsCityMode(false);
+      }
     } else {
       const stage = e.target.getStage();
       const point = stage.getPointerPosition();
@@ -649,14 +671,31 @@ export default function App() {
       
       const clickedNation = nations.find(n => n.territories.includes(idx));
       if (clickedNation) {
+        // Check if there is a city on this territory
+        const clickedCity = clickedNation.cities?.find(c => c.territoryIdx === idx);
+        if (clickedCity) {
+          setSelectedCity({ nationId: clickedNation.id, cityId: clickedCity.id });
+        } else {
+          setSelectedCity(null);
+        }
+
+        if (myNation && clickedNation.id === myNation.id) {
+          setSelectedTerritoryIdx(idx);
+        } else {
+          setSelectedTerritoryIdx(null);
+        }
+        
         const union = unions.find(u => u.members.includes(clickedNation.id));
         if (union) {
           setSelectedNationId(union.id);
         } else {
           setSelectedNationId(clickedNation.id);
         }
+        setNationInfoTab('info');
       } else {
         setSelectedNationId(null);
+        setSelectedTerritoryIdx(null);
+        setSelectedCity(null);
       }
     }
   };
@@ -671,61 +710,19 @@ export default function App() {
       
       const clickedNation = nations.find(n => n.territories.includes(idx));
       if (clickedNation) {
+        if (myNation && clickedNation.id === myNation.id) {
+          setSelectedTerritoryIdx(idx);
+        } else {
+          setSelectedTerritoryIdx(null);
+        }
         setSelectedNationId(clickedNation.id);
       }
     }
   };
 
   const handlePointerMove = (e: any) => {
-    if (isPainting && (setupPhase === 'draw' || isPaintingMode || treatySelectMode)) {
-      if (treatySelectMode) {
-        selectTreatyCell(e);
-      } else {
-        paintCell(e);
-      }
-    }
-  };
-
-  const selectTreatyCell = (e: any) => {
-    if (!landGrid || gridSize.w === 0 || !treatySelectMode) return;
-    const stage = e.target.getStage();
-    const point = stage.getPointerPosition();
-    
-    const x = Math.floor((point.x - stage.x()) / stage.scaleX());
-    const y = Math.floor((point.y - stage.y()) / stage.scaleY());
-
-    const newIndices: number[] = [];
-    
-    for (let dy = -BRUSH_RADIUS; dy <= BRUSH_RADIUS; dy++) {
-      for (let dx = -BRUSH_RADIUS; dx <= BRUSH_RADIUS; dx++) {
-        if (dx * dx + dy * dy <= BRUSH_RADIUS * BRUSH_RADIUS) {
-          const nx = x + dx;
-          const ny = y + dy;
-          if (nx >= 0 && nx < gridSize.w && ny >= 0 && ny < gridSize.h) {
-            const idx = ny * gridSize.w + nx;
-            if (landGrid[idx] === 1) {
-              newIndices.push(idx);
-            }
-          }
-        }
-      }
-    }
-
-    const isErase = e.evt && e.evt.buttons === 2; // Right click to erase
-
-    if (newIndices.length > 0) {
-      setTreatyActions(prev => prev.map(action => {
-        if (action.id === treatySelectMode.actionId) {
-          const currentTerritories = new Set(action.territories || []);
-          if (isErase) {
-            newIndices.forEach(idx => currentTerritories.delete(idx));
-          } else {
-            newIndices.forEach(idx => currentTerritories.add(idx));
-          }
-          return { ...action, territories: Array.from(currentTerritories) };
-        }
-        return action;
-      }));
+    if (isPainting && (setupPhase === 'draw' || isPaintingMode)) {
+      paintCell(e);
     }
   };
 
@@ -771,12 +768,11 @@ export default function App() {
           onPointerLeave={handlePointerUp}
           onDblClick={handleDblClick}
           onDblTap={handleDblClick}
-          onContextMenu={(e) => e.evt.preventDefault()}
           scaleX={scale}
           scaleY={scale}
           x={position.x}
           y={position.y}
-          draggable={!(setupPhase === 'draw' || isPaintingMode || treatySelectMode !== null)}
+          draggable={!(setupPhase === 'draw' || isPaintingMode)}
           onDragMove={(e) => {
             if (e.target === e.target.getStage()) {
               e.target.x(Math.round(e.target.x()));
@@ -872,21 +868,6 @@ export default function App() {
                     context.fill();
                   }
 
-                  // Draw Treaty Select Territories
-                  if (treatySelectMode) {
-                    const action = treatyActions.find(a => a.id === treatySelectMode.actionId);
-                    if (action && action.territories && action.territories.length > 0) {
-                      context.beginPath();
-                      context.fillStyle = 'rgba(255, 255, 0, 0.5)'; // Yellow semi-transparent
-                      action.territories.forEach(idx => {
-                        const x = idx % gridSize.w;
-                        const y = Math.floor(idx / gridSize.w);
-                        context.rect(x, y, 1, 1);
-                      });
-                      context.fill();
-                    }
-                  }
-
                   // Draw Pending Paints
                   if (myNation && pendingPaints.length > 0) {
                     const myUnion = unions.find(u => u.members.includes(myNation.id));
@@ -947,12 +928,38 @@ export default function App() {
               );
             })}
 
+            {/* Render Cities */}
+            {gridSize.w > 0 && nations.map(nation => {
+              if (!nation.cities) return null;
+              return nation.cities.map(city => {
+                const cx = city.territoryIdx % gridSize.w;
+                const cy = Math.floor(city.territoryIdx / gridSize.w);
+                return (
+                  <Group key={city.id} x={cx} y={cy}>
+                    <Circle radius={0.8} fill="#ffffff" shadowColor="black" shadowBlur={0.5} />
+                    <Circle radius={0.3} fill="#000000" />
+                    <Text
+                      x={1.5}
+                      y={-1.5}
+                      text={city.name}
+                      fill="#ffffff"
+                      fontSize={3}
+                      fontFamily="Inter, sans-serif"
+                      fontStyle="bold"
+                      shadowColor="black"
+                      shadowBlur={1}
+                    />
+                  </Group>
+                );
+              });
+            })}
+
             {/* Battle Markers */}
             {[...wars.flatMap(w => w.battles.map(b => ({ ...b, warId: w.id }))), ...colonizationBattles.map(b => ({ ...b, warId: 'colonization' }))].filter(b => b.status !== 'finished' || (b.pixelsToPaint && b.pixelsToPaint > 0)).map(battle => {
               const attacker = unions.find(u => u.id === battle.attackerId) || nations.find(n => n.id === battle.attackerId);
-              const defender = battle.defenderId === 'nature' ? { name: 'Природа', shortName: 'Природа' } : (unions.find(u => u.id === battle.defenderId) || nations.find(n => n.id === battle.defenderId));
-              const attName = attacker ? ('shortName' in attacker ? attacker.shortName : attacker.name) : 'Атакующий';
-              const defName = defender ? ('shortName' in defender ? defender.shortName : defender.name) : 'Защитник';
+              const defender = battle.defenderId === 'nature' ? { name: language === 'ru' ? 'Природа' : 'Nature', shortName: language === 'ru' ? 'Природа' : 'Nature' } : (unions.find(u => u.id === battle.defenderId) || nations.find(n => n.id === battle.defenderId));
+              const attName = attacker ? ('shortName' in attacker ? attacker.shortName : attacker.name) : language === 'ru' ? 'Атакующий' : 'Attacker';
+              const defName = defender ? ('shortName' in defender ? defender.shortName : defender.name) : language === 'ru' ? 'Защитник' : 'Defender';
               
               const isAttackerReady = battle.readyPlayers?.includes(battle.attackerId);
               const isDefenderReady = battle.defenderId === 'nature' ? true : battle.readyPlayers?.includes(battle.defenderId);
@@ -980,75 +987,72 @@ export default function App() {
                 <Group key={battle.id} x={battle.x} y={battle.y}>
                   {/* Background with shadow and stroke */}
                   <Rect 
-                    x={-90 / scale} y={-55 / scale} 
-                    width={180 / scale} height={110 / scale} 
-                    fill="#111118" 
-                    cornerRadius={8 / scale} 
-                    stroke={battle.status === 'finished' ? (battle.winnerId === 'draw' ? '#eab308' : '#22c55e') : '#ef4444'} 
+                    x={-80 / scale} y={-45 / scale} 
+                    width={160 / scale} height={100 / scale} 
+                    fill="#1e1e24" 
+                    cornerRadius={12 / scale} 
+                    stroke="#333" 
                     strokeWidth={2 / scale}
                     shadowColor="black"
-                    shadowBlur={15 / scale}
-                    shadowOpacity={0.8}
-                    shadowOffsetY={8 / scale}
+                    shadowBlur={10 / scale}
+                    shadowOpacity={0.5}
+                    shadowOffsetY={5 / scale}
                   />
                   
                   {/* Header/Title area */}
                   <Rect 
-                    x={-90 / scale} y={-55 / scale} 
-                    width={180 / scale} height={24 / scale} 
-                    fill={battle.status === 'finished' ? (battle.winnerId === 'draw' ? '#eab30833' : '#22c55e33') : '#ef444433'} 
-                    cornerRadius={[8 / scale, 8 / scale, 0, 0]} 
+                    x={-80 / scale} y={-45 / scale} 
+                    width={160 / scale} height={20 / scale} 
+                    fill="#2a2a35" 
+                    cornerRadius={[12 / scale, 12 / scale, 0, 0]} 
                   />
                   <Text 
-                    text={battle.warId === 'colonization' ? "COLONIZATION" : "BATTLE"} 
-                    fill={battle.status === 'finished' ? (battle.winnerId === 'draw' ? '#facc15' : '#4ade80') : '#f87171'} 
-                    width={180 / scale} x={-90 / scale} align="center" y={-48 / scale} fontSize={10 / scale} fontStyle="bold" tracking={2 / scale}
+                    text={battle.warId === 'colonization' ? language === 'ru' ? 'Колонизация' : 'Colonization' : (language === 'ru' ? 'Битва' : 'Battle')} 
+                    fill="#aaa" width={160 / scale} x={-80 / scale} align="center" y={-40 / scale} fontSize={10 / scale} fontStyle="bold" 
                   />
 
                   {/* Attacker */}
-                  <Group x={-80 / scale} y={-20 / scale} onClick={handleAttackerClick} onTap={handleAttackerClick}>
-                    <Text text={attName} fill="#e2e8f0" width={70 / scale} align="center" y={-10 / scale} fontSize={10 / scale} fontStyle="bold" />
+                  <Group x={-70 / scale} y={-15 / scale} onClick={handleAttackerClick} onTap={handleAttackerClick}>
+                    <Text text={attName} fill="white" width={60 / scale} align="center" y={-8 / scale} fontSize={10 / scale} fontStyle="bold" />
                     <Rect 
-                      y={6 / scale}
-                      width={70 / scale} height={36 / scale} 
-                      fill={battle.status === 'finished' ? (battle.winnerId === battle.attackerId ? "#166534" : "#334155") : (isAttackerReady ? "#ca8a04" : "#991b1b")} 
-                      cornerRadius={4 / scale} 
-                      stroke={battle.status === 'finished' ? (battle.winnerId === battle.attackerId ? "#22c55e" : "#475569") : (isAttackerReady ? "#facc15" : "#ef4444")}
-                      strokeWidth={1 / scale}
+                      y={8 / scale}
+                      width={60 / scale} height={35 / scale} 
+                      fill={battle.status === 'finished' ? (battle.winnerId === battle.attackerId ? "#22c55e" : "#4b5563") : (isAttackerReady ? "#eab308" : "#ef4444")} 
+                      cornerRadius={6 / scale} 
+                      shadowColor="black" shadowBlur={4 / scale} shadowOpacity={0.3} shadowOffsetY={2 / scale}
                     />
                     <Text 
-                      text={battle.status === 'finished' ? String(battle.attackerRoll) : (isAttackerReady ? "READY" : "ROLL")} 
-                      fill="white" width={70 / scale} align="center" y={18 / scale} fontSize={12 / scale} fontStyle="bold" 
+                      text={battle.status === 'finished' ? String(battle.attackerRoll) : (isAttackerReady ? language === 'ru' ? 'ГОТОВ' : 'READY' : (language === 'ru' ? 'НАЧАТЬ' : 'START'))} 
+                      fill="white" width={60 / scale} align="center" y={20 / scale} fontSize={11 / scale} fontStyle="bold" 
                     />
                   </Group>
 
                   {/* VS Badge */}
-                  <Circle x={0} y={10 / scale} radius={14 / scale} fill="#1e293b" stroke="#334155" strokeWidth={2 / scale} />
-                  <Text text="VS" fill="#94a3b8" x={-10 / scale} y={5 / scale} width={20 / scale} align="center" fontSize={10 / scale} fontStyle="bold" />
+                  <Circle x={0} y={10 / scale} radius={12 / scale} fill="#3b82f6" shadowColor="black" shadowBlur={4 / scale} shadowOpacity={0.4} />
+                  <Text text="VS" fill="white" x={-10 / scale} y={5 / scale} width={20 / scale} align="center" fontSize={10 / scale} fontStyle="bold" />
 
                   {/* Defender */}
-                  <Group x={10 / scale} y={-20 / scale} onClick={handleDefenderClick} onTap={handleDefenderClick}>
-                    <Text text={defName} fill="#e2e8f0" width={70 / scale} align="center" y={-10 / scale} fontSize={10 / scale} fontStyle="bold" />
+                  <Group x={10 / scale} y={-15 / scale} onClick={handleDefenderClick} onTap={handleDefenderClick}>
+                    <Text text={defName} fill="white" width={60 / scale} align="center" y={-8 / scale} fontSize={10 / scale} fontStyle="bold" />
                     <Rect 
-                      y={6 / scale}
-                      width={70 / scale} height={36 / scale} 
-                      fill={battle.status === 'finished' ? (battle.winnerId === battle.defenderId ? "#166534" : "#334155") : (isDefenderReady ? "#ca8a04" : "#1d4ed8")} 
-                      cornerRadius={4 / scale} 
-                      stroke={battle.status === 'finished' ? (battle.winnerId === battle.defenderId ? "#22c55e" : "#475569") : (isDefenderReady ? "#facc15" : "#3b82f6")}
-                      strokeWidth={1 / scale}
+                      y={8 / scale}
+                      width={60 / scale} height={35 / scale} 
+                      fill={battle.status === 'finished' ? (battle.winnerId === battle.defenderId ? "#22c55e" : "#4b5563") : (isDefenderReady ? "#eab308" : "#3b82f6")} 
+                      cornerRadius={6 / scale} 
+                      shadowColor="black" shadowBlur={4 / scale} shadowOpacity={0.3} shadowOffsetY={2 / scale}
                     />
                     <Text 
-                      text={battle.status === 'finished' ? String(battle.defenderRoll) : (isDefenderReady ? "READY" : "ROLL")} 
-                      fill="white" width={70 / scale} align="center" y={18 / scale} fontSize={12 / scale} fontStyle="bold" 
+                      text={battle.status === 'finished' ? String(battle.defenderRoll) : (isDefenderReady ? language === 'ru' ? 'ГОТОВ' : 'READY' : (language === 'ru' ? 'НАЧАТЬ' : 'START'))} 
+                      fill="white" width={60 / scale} align="center" y={20 / scale} fontSize={11 / scale} fontStyle="bold" 
                     />
                   </Group>
 
                   {/* Result Text */}
                   {battle.status === 'finished' && (
                     <Text 
-                      text={battle.winnerId === 'draw' ? 'DRAW' : (battle.winnerId === battle.attackerId ? `VICTORY: ${attName}` : `VICTORY: ${defName}`)} 
+                      text={battle.winnerId === 'draw' ? language === 'ru' ? 'Ничья' : 'Draw' : (battle.winnerId === battle.attackerId ? `${language === 'ru' ? 'Победа:' : 'Victory:'} ${attName}` : `${language === 'ru' ? 'Победа:' : 'Victory:'} ${defName}`)} 
                       fill={battle.winnerId === 'draw' ? '#facc15' : '#4ade80'} 
-                      width={180 / scale} x={-90 / scale} align="center" y={38 / scale} fontSize={10 / scale} fontStyle="bold" 
+                      width={160 / scale} x={-80 / scale} align="center" y={40 / scale} fontSize={11 / scale} fontStyle="bold" 
                     />
                   )}
                 </Group>
@@ -1071,7 +1075,7 @@ export default function App() {
               </div>
               
               <button 
-                onClick={() => { setShowAlliances(!showAlliances); setShowUN(false); setShowUnions(false); setShowNationSettings(false); setShowWars(false); setShowTreaties(false); }}
+                onClick={() => { setShowAlliances(!showAlliances); setShowUN(false); setShowUnions(false); setShowNationSettings(false); setShowWars(false); }}
                 className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showAlliances ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
               >
                 <Globe className="w-5 h-5 text-purple-400" />
@@ -1082,7 +1086,7 @@ export default function App() {
               </button>
 
               <button 
-                onClick={() => { setShowUN(!showUN); setShowAlliances(false); setShowUnions(false); setShowNationSettings(false); setShowWars(false); setShowTreaties(false); }}
+                onClick={() => { setShowUN(!showUN); setShowAlliances(false); setShowUnions(false); setShowNationSettings(false); setShowWars(false); }}
                 className={`bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showUN ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
               >
                 <Landmark className="w-5 h-5 text-blue-400" />
@@ -1090,7 +1094,7 @@ export default function App() {
               </button>
 
               <button 
-                onClick={() => { setShowUnions(!showUnions); setShowAlliances(false); setShowUN(false); setShowNationSettings(false); setShowWars(false); setShowTreaties(false); }}
+                onClick={() => { setShowUnions(!showUnions); setShowAlliances(false); setShowUN(false); setShowNationSettings(false); setShowWars(false); }}
                 className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showUnions ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
               >
                 <Shield className="w-5 h-5 text-green-400" />
@@ -1101,7 +1105,7 @@ export default function App() {
               </button>
 
               <button 
-                onClick={() => { setShowWars(!showWars); setShowAlliances(false); setShowUN(false); setShowUnions(false); setShowNationSettings(false); setShowTreaties(false); }}
+                onClick={() => { setShowWars(!showWars); setShowAlliances(false); setShowUN(false); setShowUnions(false); setShowNationSettings(false); }}
                 className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showWars ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
               >
                 <Swords className="w-5 h-5 text-red-400" />
@@ -1112,11 +1116,18 @@ export default function App() {
               </button>
 
               <button 
-                onClick={() => { setShowTreaties(!showTreaties); setShowWars(false); setShowAlliances(false); setShowUN(false); setShowUnions(false); setShowNationSettings(false); }}
-                className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-lg pointer-events-auto flex items-center gap-2 transition-colors shadow-lg ${showTreaties ? 'bg-gray-700/80' : 'hover:bg-gray-800/80'}`}
+                onClick={() => {
+                  setShowSettings(!showSettings);
+                  setShowAlliances(false);
+                  setShowWars(false);
+                  setShowUN(false);
+                  setShowUnions(false);
+                  setShowNationSettings(false);
+                }}
+                className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-xl pointer-events-auto flex items-center justify-center gap-2 transition-colors shadow-lg ${showSettings ? 'bg-gray-500/50 hover:bg-gray-500/70' : 'hover:bg-gray-800/80'}`}
+                title={t('settings')}
               >
-                <ScrollText className="w-5 h-5 text-yellow-400" />
-                <span className="font-bold text-sm">Treaties</span>
+                <Settings className={`w-5 h-5 ${showSettings ? 'text-white' : 'text-gray-400'}`} /> 
               </button>
 
               {(activeBattleId || proposingPeace) && (
@@ -1125,6 +1136,7 @@ export default function App() {
                     setIsPaintingMode(!isPaintingMode);
                     if (!isPaintingMode) {
                       setIsRollMode(false);
+                      setIsCityMode(false);
                       setPlacingBattle(null);
                     }
                   }} 
@@ -1193,7 +1205,7 @@ export default function App() {
                     disabled={newsCooldown > 0 || !newsInput.trim()}
                     className="bg-green-600 hover:bg-green-500 px-2 py-1 rounded text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {newsCooldown > 0 ? `${newsCooldown}с` : 'Отправить'}
+                    {newsCooldown > 0 ? `${newsCooldown}s` : t('send')}
                   </button>
                 </form>
               )}
@@ -1203,11 +1215,14 @@ export default function App() {
           {myNation && (
             <button 
               onClick={() => {
+                setNationSettingsTab('general');
                 setEditNationName(myNation.name);
                 setEditNationShortName(myNation.shortName);
                 setEditNationIdeology(myNation.ideology);
                 setEditNationColor(myNation.color);
                 setEditNationFlag(myNation.flag || '');
+                setEditNationDescription(myNation.description || '');
+                setEditNationParties(myNation.parties || []);
                 setShowNationSettings(true);
                 setShowAlliances(false);
                 setShowUN(false);
@@ -1228,60 +1243,247 @@ export default function App() {
 
         {/* Nation Settings Panel */}
         {showNationSettings && myNation && (
-          <div className="absolute top-20 right-4 w-[400px] bg-black/90 backdrop-blur-xl border border-white/20 rounded-xl pointer-events-auto shadow-2xl overflow-hidden flex flex-col">
+          <div className="absolute top-20 right-4 w-[400px] max-h-[calc(100vh-140px)] bg-black/90 backdrop-blur-xl border border-white/20 rounded-xl pointer-events-auto shadow-2xl overflow-hidden flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-white/10 bg-white/5">
-              <h2 className="text-xl font-bold flex items-center gap-2"><Settings className="w-5 h-5 text-gray-400"/> Настройки страны</h2>
+              <h2 className="text-xl font-bold flex items-center gap-2"><Settings className="w-5 h-5 text-gray-400"/> {t('nationSettings')}</h2>
               <button onClick={() => setShowNationSettings(false)} className="text-gray-400 hover:text-white"><X className="w-5 h-5"/></button>
             </div>
+            <div className="flex border-b border-white/10">
+              <button 
+                onClick={() => setNationSettingsTab('general')} 
+                className={`flex-1 py-2 text-sm font-medium transition-colors ${nationSettingsTab === 'general' ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}
+              >
+                {t('tabSettingsGeneral')}
+              </button>
+              <button 
+                onClick={() => setNationSettingsTab('economy')} 
+                className={`flex-1 py-2 text-sm font-medium transition-colors ${nationSettingsTab === 'economy' ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}
+              >
+                {t('tabSettingsEconomy')}
+              </button>
+              <button 
+                onClick={() => setNationSettingsTab('politics')} 
+                className={`flex-1 py-2 text-sm font-medium transition-colors ${nationSettingsTab === 'politics' ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}
+              >
+                {t('tabSettingsPolitics')}
+              </button>
+            </div>
             <div className="p-4 flex-1 overflow-y-auto custom-scrollbar space-y-4">
-              <div>
-                <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Полное название</label>
-                <input type="text" value={editNationName} onChange={e => setEditNationName(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
-              </div>
-              <div>
-                <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Короткое название</label>
-                <input type="text" value={editNationShortName} onChange={e => setEditNationShortName(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
-              </div>
-              <div>
-                <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Идеология</label>
-                <select value={editNationIdeology} onChange={e => setEditNationIdeology(e.target.value)} className="w-full bg-[#1a1a1a] border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
-                  {IDEOLOGIES.map(i => <option key={i} value={i}>{i}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Цвет</label>
-                <div className="flex gap-2">
-                  <input type="color" value={editNationColor} onChange={e => setEditNationColor(e.target.value)} className="w-10 h-10 rounded cursor-pointer bg-transparent border-0 p-0" />
-                  <input type="text" value={editNationColor} onChange={e => setEditNationColor(e.target.value)} className="flex-1 bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 uppercase" />
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Флаг (URL или файл)</label>
-                <div className="flex gap-2">
-                  <input type="text" value={editNationFlag} onChange={e => setEditNationFlag(e.target.value)} placeholder="https://..." className="flex-1 bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
-                  <label className="cursor-pointer bg-white/10 hover:bg-white/20 border border-white/10 rounded px-3 py-2 flex items-center justify-center transition-colors">
-                    <Upload className="w-4 h-4 text-gray-300" />
-                    <input type="file" accept="image/*" className="hidden" onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onload = (event) => {
-                          if (event.target?.result) {
-                            setEditNationFlag(event.target.result as string);
-                          }
-                        };
-                        reader.readAsDataURL(file);
-                      }
-                    }} />
-                  </label>
-                </div>
-                {editNationFlag && (
-                  <div className="mt-2 flex justify-center">
-                    <img src={editNationFlag} alt="Preview" className="h-16 w-auto object-contain rounded border border-white/20" />
+              {nationSettingsTab === 'general' ? (
+                <>
+                  <div>
+                    <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('fullName')}</label>
+                    <input type="text" value={editNationName} onChange={e => setEditNationName(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
                   </div>
-                )}
-              </div>
+                  <div>
+                    <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('shortName')}</label>
+                    <input type="text" value={editNationShortName} onChange={e => setEditNationShortName(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
+                  </div>
+                  <div>
+                    <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('ideology')}</label>
+                    <input 
+                      type="text"
+                      value={editNationIdeology} 
+                      onChange={e => setEditNationIdeology(e.target.value)} 
+                      placeholder={t('ideology')}
+                      className="w-full bg-[#1a1a1a] border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('loreDesc')}</label>
+                    <textarea 
+                      value={editNationDescription} 
+                      onChange={e => setEditNationDescription(e.target.value)} 
+                      className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 resize-none h-24"
+                      placeholder={t('lorePlaceholder')}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('color')}</label>
+                    <div className="flex gap-2">
+                      <input type="color" value={editNationColor} onChange={e => setEditNationColor(e.target.value)} className="w-10 h-10 rounded cursor-pointer bg-transparent border-0 p-0" />
+                      <input type="text" value={editNationColor} onChange={e => setEditNationColor(e.target.value)} className="flex-1 bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 uppercase" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('flag')}</label>
+                    <div className="flex gap-2">
+                      <input type="text" value={editNationFlag} onChange={e => setEditNationFlag(e.target.value)} placeholder="https://..." className="flex-1 bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
+                      <label className="cursor-pointer bg-white/10 hover:bg-white/20 border border-white/10 rounded px-3 py-2 flex items-center justify-center transition-colors">
+                        <Upload className="w-4 h-4 text-gray-300" />
+                        <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = (event) => {
+                              if (event.target?.result) {
+                                setEditNationFlag(event.target.result as string);
+                              }
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }} />
+                      </label>
+                    </div>
+                    {editNationFlag && (
+                      <div className="mt-2 flex justify-center">
+                        <img src={editNationFlag} alt="Preview" className="h-16 w-auto object-contain rounded border border-white/20" />
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : nationSettingsTab === 'economy' ? (
+                <>
+                  <div className="border border-white/10 p-3 rounded bg-black/20">
+                    <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wider mb-3">{t('economy')}</h3>
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center bg-black/40 p-2 rounded border border-white/5">
+                        <span className="text-gray-400 text-sm">{t('gdp')}:</span>
+                        <div className="text-right">
+                          <span className="font-bold text-green-400">${myNation.gdp?.toLocaleString() || 1000}</span>
+                          {myNation.gdpChange !== undefined && (
+                            <span className={`ml-2 text-xs ${myNation.gdpChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                              {myNation.gdpChange >= 0 ? '+' : ''}{myNation.gdpChange}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('economyState')}</label>
+                        <select 
+                          value={myNation.economyState || 'Стагнация'} 
+                          onChange={e => useGameStore.getState().updateEconomyState(e.target.value)} 
+                          disabled={!!myNation.economyLockedUntil && Date.now() < myNation.economyLockedUntil}
+                          className="w-full bg-[#1a1a1a] border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                        >
+                          {['Депрессия', 'Рецессия', 'Стагнация', 'Рост', 'Экономический бум'].map(s => (
+                            <option key={s} value={s}>{tMapEconomy(language, s)}</option>
+                          ))}
+                        </select>
+                        {!!myNation.economyLockedUntil && Date.now() < myNation.economyLockedUntil && (
+                          <p className="text-xs text-red-400 mt-1">{t('overheatLocked')}</p>
+                        )}
+                      </div>
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-xs uppercase tracking-wider text-gray-400">{t('overheat')}</label>
+                          <span className="text-xs font-bold text-red-400">{myNation.overheat || 0}%</span>
+                        </div>
+                        <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden">
+                          <div className="bg-red-500 h-2 transition-all duration-500" style={{ width: `${myNation.overheat || 0}%` }}></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="border border-white/10 p-3 rounded bg-black/20">
+                    <h3 className="text-sm font-bold text-gray-300 uppercase tracking-wider mb-3">{t('parties')}</h3>
+                    
+                    {editNationParties.length > 0 && (
+                      <div className="space-y-2 mb-4 max-h-40 overflow-y-auto custom-scrollbar pr-1">
+                        {editNationParties.map((party, idx) => (
+                          <div key={party.id || idx} className="flex flex-col bg-black/40 p-2 rounded border border-white/5">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className="w-3 h-3 rounded-full" style={{ backgroundColor: party.color }}></span>
+                                <span className="font-bold text-sm text-white">{party.name}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold bg-white/10 px-2 py-0.5 rounded">{party.percentage}%</span>
+                                <button 
+                                  onClick={() => setEditNationParties(prev => prev.filter((_, i) => i !== idx))}
+                                  className="text-red-400 hover:text-red-300"
+                                >
+                                  <X className="w-4 h-4"/>
+                                </button>
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between mt-1 px-5">
+                              <span className="text-xs text-gray-400">{tMapIdeology(language, party.ideology)}</span>
+                              {party.leader && <span className="text-xs text-gray-300 ml-2">{party.leader}</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="bg-black/30 p-2 rounded border border-white/5 space-y-2">
+                      <div className="flex gap-2">
+                        <div className="w-10">
+                          <input type="color" value={newPartyColor} onChange={e => setNewPartyColor(e.target.value)} className="w-10 h-10 rounded cursor-pointer bg-transparent border-0 p-0" />
+                        </div>
+                        <input 
+                          type="text" 
+                          value={newPartyName} 
+                          onChange={e => setNewPartyName(e.target.value)} 
+                          placeholder={t('partyName')}
+                          className="flex-1 bg-black/40 border border-white/10 rounded px-2 text-sm focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                            <input 
+                              type="text"
+                              value={newPartyIdeology} 
+                              onChange={e => setNewPartyIdeology(e.target.value)} 
+                              placeholder={t('ideology')}
+                              className="flex-1 bg-[#1a1a1a] border border-white/10 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+                            />
+                            <div className="w-16 flex items-center bg-black/40 border border-white/10 rounded px-1">
+                              <input 
+                                type="number" 
+                                min="1" max="100" 
+                                value={newPartyPercentage} 
+                                onChange={e => setNewPartyPercentage(Number(e.target.value))} 
+                                className="w-full bg-transparent text-sm text-right focus:outline-none text-white"
+                              />
+                              <span className="text-xs text-gray-400 ml-1">%</span>
+                            </div>
+                      </div>
+                      <input 
+                        type="text" 
+                        value={newPartyLeader} 
+                        onChange={e => setNewPartyLeader(e.target.value)} 
+                        placeholder={t('leaderOptional')}
+                        className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+                      />
+                      
+                      <button 
+                        onClick={() => {
+                          if (!newPartyName.trim() || newPartyPercentage <= 0) return;
+                          const totalPercentage = editNationParties.reduce((sum, p) => sum + p.percentage, 0);
+                          const remaining = 100 - totalPercentage;
+                          const actualPercentage = Math.min(newPartyPercentage, remaining);
+                          
+                          if (actualPercentage > 0) {
+                            setEditNationParties(prev => [...prev, {
+                              id: Math.random().toString(36).substring(7),
+                              name: newPartyName,
+                              color: newPartyColor,
+                              ideology: newPartyIdeology,
+                              leader: newPartyLeader,
+                              percentage: actualPercentage
+                            }]);
+                            setNewPartyName('');
+                            setNewPartyLeader('');
+                            setNewPartyPercentage(Math.min(10, remaining - actualPercentage || 10)); // default next
+                          } else {
+                            alert(language === 'ru' ? 'Сумма процентов не может превышать 100%' : 'Total percentage cannot exceed 100%');
+                          }
+                        }}
+                        className="w-full bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-400 text-xs font-bold py-1.5 rounded border border-emerald-500/30 transition-colors"
+                      >
+                        + {t('addParty')}
+                      </button>
+                      <div className="text-right text-xs text-gray-500">
+                        {t('total')}: {editNationParties.reduce((sum, p) => sum + p.percentage, 0)}%
+                        <span className="text-gray-600 block leading-tight mt-0.5">{language === 'ru' ? 'Оставшийся % будет независимым' : 'Remaining % will be unaligned'}</span>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
               
               <div className="pt-4 border-t border-white/10 flex flex-col gap-2">
                 <button 
@@ -1291,19 +1493,21 @@ export default function App() {
                       shortName: editNationShortName,
                       ideology: editNationIdeology,
                       color: editNationColor,
-                      flag: editNationFlag
+                      flag: editNationFlag,
+                      description: editNationDescription,
+                      parties: editNationParties
                     });
                     setShowNationSettings(false);
                     setConfirmDisband(false);
                   }}
                   className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded transition-colors"
                 >
-                  Сохранить изменения
+                  {t('saveChanges')}
                 </button>
                 
                 {confirmDisband ? (
                   <div className="mt-4 p-3 bg-red-900/50 border border-red-500/50 rounded-lg text-center">
-                    <p className="text-sm text-red-200 mb-3">Вы уверены? Ваша страна будет навсегда удалена.</p>
+                    <p className="text-sm text-red-200 mb-3">{t('disbandConfirm')}</p>
                     <div className="flex gap-2">
                       <button 
                         onClick={() => {
@@ -1313,13 +1517,13 @@ export default function App() {
                         }}
                         className="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-1 px-2 rounded transition-colors"
                       >
-                        Да, расформировать
+                        {t('disbandNation')}
                       </button>
                       <button 
                         onClick={() => setConfirmDisband(false)}
                         className="flex-1 bg-gray-600 hover:bg-gray-500 text-white font-bold py-1 px-2 rounded transition-colors"
                       >
-                        Отмена
+                        {t('cancel')}
                       </button>
                     </div>
                   </div>
@@ -1328,412 +1532,10 @@ export default function App() {
                     onClick={() => setConfirmDisband(true)}
                     className="w-full bg-red-600/20 hover:bg-red-600/40 text-red-500 border border-red-500/50 font-bold py-2 px-4 rounded transition-colors mt-4"
                   >
-                    Расформировать страну
+                    {t('disbandNation')}
                   </button>
                 )}
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* Treaties Panel */}
-        {showTreaties && (
-          <div className="absolute top-20 left-1/2 -translate-x-1/2 w-[600px] bg-black/90 backdrop-blur-xl border border-yellow-500/30 rounded-xl pointer-events-auto shadow-2xl overflow-hidden flex flex-col max-h-[70vh]">
-            <div className="flex items-center justify-between p-4 border-b border-yellow-500/20 bg-yellow-900/10">
-              <h2 className="text-xl font-bold flex items-center gap-2 text-yellow-400"><ScrollText className="w-5 h-5"/> Treaties</h2>
-              <button onClick={() => setShowTreaties(false)} className="text-gray-400 hover:text-white"><X className="w-5 h-5"/></button>
-            </div>
-            
-            <div className="flex border-b border-white/10">
-              <button 
-                onClick={() => setTreatyView('list')} 
-                className={`flex-1 py-2 text-sm font-bold ${treatyView === 'list' ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5'}`}
-              >
-                Active Treaties
-              </button>
-              <button 
-                onClick={() => setTreatyView('create')} 
-                className={`flex-1 py-2 text-sm font-bold ${treatyView === 'create' ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5'}`}
-              >
-                Create Treaty
-              </button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {treatyView === 'list' && (
-                <div className="space-y-4">
-                  {treaties.length === 0 ? (
-                    <div className="text-center text-gray-500 py-8">No active treaties</div>
-                  ) : (
-                    treaties.map(treaty => {
-                      const creator = getEntity(treaty.creatorId);
-                      return (
-                        <div key={treaty.id} className="bg-white/5 border border-white/10 rounded-lg p-4">
-                          <div className="flex justify-between items-start mb-2">
-                            <div>
-                              <h3 className="font-bold text-lg text-yellow-400">{treaty.name}</h3>
-                              <div className="text-xs text-gray-400">Created by {creator?.name}</div>
-                            </div>
-                            <div className="text-xs font-bold px-2 py-1 rounded bg-yellow-500/20 text-yellow-300">
-                              {treaty.status.toUpperCase()}
-                            </div>
-                          </div>
-                          
-                          <div className="text-sm text-gray-300 mb-4 whitespace-pre-wrap">
-                            {treaty.text}
-                          </div>
-
-                          {treaty.conditions.length > 0 && (
-                            <div className="mb-4">
-                              <h4 className="text-xs font-bold text-gray-400 mb-1 uppercase">Conditions</h4>
-                              <div className="space-y-1">
-                                {treaty.conditions.map(c => (
-                                  <div key={c.id} className="text-xs bg-purple-500/10 border border-purple-500/20 text-purple-300 px-2 py-1 rounded">
-                                    <span className="font-bold mr-1">[{c.type.replace('_', ' ').toUpperCase()}]</span>
-                                    {c.description}
-                                    {c.type === 'timer' && c.duration && (
-                                      <span className="ml-2 text-gray-400">
-                                        ({c.duration / 1000} seconds)
-                                      </span>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {treaty.actions.length > 0 && (
-                            <div className="mb-4">
-                              <h4 className="text-xs font-bold text-gray-400 mb-1 uppercase">Actions</h4>
-                              <div className="space-y-1">
-                                {treaty.actions.map(a => (
-                                  <div key={a.id} className="text-xs bg-yellow-500/10 border border-yellow-500/20 text-yellow-300 px-2 py-1 rounded">
-                                    <span className="font-bold mr-1">[{a.type.replace('_', ' ').toUpperCase()}]</span>
-                                    {a.description}
-                                    {a.type === 'transfer_land' && a.targetId && (
-                                      <span className="ml-2 text-gray-400">
-                                        (To: {getEntity(a.targetId)?.name}, {a.territories?.length || 0} territories)
-                                      </span>
-                                    )}
-                                    {a.type === 'create_nation' && a.newNationName && (
-                                      <span className="ml-2 text-gray-400">
-                                        (Name: {a.newNationName}, {a.territories?.length || 0} territories)
-                                      </span>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          
-                          <div className="flex flex-wrap gap-2 mb-4">
-                            {treaty.participants.map(pId => {
-                              const p = getEntity(pId);
-                              const hasSigned = treaty.agreements.includes(pId);
-                              return (
-                                <div key={pId} className={`text-xs px-2 py-1 rounded border flex items-center gap-1 ${hasSigned ? 'bg-green-500/20 border-green-500/30 text-green-300' : 'bg-gray-500/20 border-gray-500/30 text-gray-300'}`}>
-                                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: p?.color }}></div>
-                                  {p?.name} {hasSigned && '✓'}
-                                </div>
-                              );
-                            })}
-                          </div>
-                          
-                          {myDiplomaticEntity && (
-                            <div className="flex gap-2">
-                              {treaty.status === 'draft' && treaty.participants.includes(myDiplomaticEntity.id) && !treaty.agreements.includes(myDiplomaticEntity.id) && (
-                                <button
-                                  onClick={() => signTreaty(treaty.id)}
-                                  className="px-3 py-1 bg-green-600 hover:bg-green-500 text-white text-sm font-bold rounded"
-                                >
-                                  Sign Treaty
-                                </button>
-                              )}
-                              {treaty.status === 'draft' && !treaty.participants.includes(myDiplomaticEntity.id) && (treaty.isPublic || treaty.invited.includes(myDiplomaticEntity.id)) && (
-                                <button
-                                  onClick={() => joinTreaty(treaty.id)}
-                                  className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded"
-                                >
-                                  Join Treaty
-                                </button>
-                              )}
-                              {treaty.status === 'active' && treaty.participants.includes(myDiplomaticEntity.id) && (
-                                <button
-                                  onClick={() => denounceTreaty(treaty.id)}
-                                  className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white text-sm font-bold rounded"
-                                >
-                                  Denounce Treaty
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              )}
-
-              {treatyView === 'create' && myDiplomaticEntity && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-bold text-gray-400 mb-1">Treaty Name</label>
-                    <input 
-                      type="text" 
-                      id="treatyName"
-                      className="w-full bg-black/50 border border-white/10 rounded p-2 text-white"
-                      placeholder="e.g. Treaty of Versailles"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-bold text-gray-400 mb-1">Treaty Text / Terms</label>
-                    <textarea 
-                      id="treatyText"
-                      className="w-full bg-black/50 border border-white/10 rounded p-2 text-white h-32"
-                      placeholder="Describe the terms of the treaty..."
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-bold text-gray-400 mb-1">Invite Participants</label>
-                    <div className="flex gap-2 mb-2">
-                      <select id="treatyInviteSelect" className="flex-1 bg-black/50 border border-white/10 rounded p-2 text-white">
-                        <option value="">Select a nation/alliance...</option>
-                        {nations.filter(n => n.id !== myDiplomaticEntity?.id).map(n => (
-                          <option key={n.id} value={n.id}>{n.name}</option>
-                        ))}
-                        {alliances.filter(a => a.id !== myDiplomaticEntity?.id).map(a => (
-                          <option key={a.id} value={a.id}>{a.name} (Alliance)</option>
-                        ))}
-                      </select>
-                      <button 
-                        onClick={() => {
-                          const val = (document.getElementById('treatyInviteSelect') as HTMLSelectElement).value;
-                          if (val && !treatyInvited.includes(val)) {
-                            setTreatyInvited([...treatyInvited, val]);
-                          }
-                        }}
-                        className="px-4 bg-blue-600 hover:bg-blue-500 rounded font-bold"
-                      >
-                        Add
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {treatyInvited.map(id => {
-                        const entity = getEntity(id);
-                        return (
-                          <div key={id} className="bg-white/10 px-2 py-1 rounded text-sm flex items-center gap-2">
-                            {entity?.name}
-                            <button onClick={() => setTreatyInvited(treatyInvited.filter(i => i !== id))} className="text-red-400 hover:text-red-300">×</button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-bold text-gray-400 mb-1">Actions (Constructor)</label>
-                    <div className="flex gap-2 mb-2">
-                      <select id="treatyActionSelect" className="flex-1 bg-black/50 border border-white/10 rounded p-2 text-white">
-                        <option value="transfer_land">Transfer Land</option>
-                        <option value="demilitarized_zone">Create Demilitarized Zone</option>
-                        <option value="create_nation">Create New Nation</option>
-                        <option value="resource_help">Resource Aid</option>
-                        <option value="custom">Custom Action</option>
-                      </select>
-                      <input 
-                        type="text" 
-                        placeholder="Description..." 
-                        value={treatyActionDesc}
-                        onChange={(e) => setTreatyActionDesc(e.target.value)}
-                        className="flex-1 bg-black/50 border border-white/10 rounded p-2 text-white"
-                      />
-                      <button 
-                        onClick={() => {
-                          const type = (document.getElementById('treatyActionSelect') as HTMLSelectElement).value as any;
-                          if (treatyActionDesc.trim()) {
-                            setTreatyActions([...treatyActions, { id: Math.random().toString(), type, description: treatyActionDesc.trim() }]);
-                            setTreatyActionDesc('');
-                          }
-                        }}
-                        className="px-4 bg-yellow-600 hover:bg-yellow-500 rounded font-bold"
-                      >
-                        Add Action
-                      </button>
-                    </div>
-                    <div className="space-y-2">
-                      {treatyActions.map(action => (
-                        <div key={action.id} className="bg-white/5 border border-white/10 p-2 rounded text-sm flex flex-col gap-2">
-                          <div className="flex justify-between items-center">
-                            <div>
-                              <span className="font-bold text-yellow-400 mr-2">[{action.type.replace('_', ' ').toUpperCase()}]</span>
-                              {action.description}
-                            </div>
-                            <button onClick={() => setTreatyActions(treatyActions.filter(a => a.id !== action.id))} className="text-red-400 hover:text-red-300">×</button>
-                          </div>
-                          
-                          {action.type === 'transfer_land' && (
-                            <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-white/10">
-                              <div className="flex items-center gap-2">
-                                <span className="text-gray-400">Target (Receiver):</span>
-                                <select 
-                                  className="bg-black/50 border border-white/10 rounded px-2 py-1 flex-1"
-                                  value={action.targetId || ''}
-                                  onChange={(e) => {
-                                    setTreatyActions(prev => prev.map(a => a.id === action.id ? { ...a, targetId: e.target.value } : a));
-                                  }}
-                                >
-                                  <option value="">Select Target...</option>
-                                  {nations.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
-                                  {alliances.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                                </select>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span className="text-gray-400">Territories: {action.territories?.length || 0} selected</span>
-                                <button 
-                                  onClick={() => {
-                                    if (treatySelectMode?.actionId === action.id) {
-                                      setTreatySelectMode(null);
-                                    } else {
-                                      setTreatySelectMode({ actionId: action.id, type: 'transfer_land' });
-                                    }
-                                  }}
-                                  className={`px-3 py-1 rounded text-xs font-bold ${treatySelectMode?.actionId === action.id ? 'bg-yellow-500 text-black' : 'bg-white/10 hover:bg-white/20'}`}
-                                >
-                                  {treatySelectMode?.actionId === action.id ? 'Done Selecting' : 'Select on Map'}
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                          
-                          {action.type === 'create_nation' && (
-                            <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-white/10">
-                              <div className="flex items-center gap-2">
-                                <input 
-                                  type="text" 
-                                  placeholder="New Nation Name" 
-                                  className="bg-black/50 border border-white/10 rounded px-2 py-1 flex-1"
-                                  value={action.newNationName || ''}
-                                  onChange={(e) => setTreatyActions(prev => prev.map(a => a.id === action.id ? { ...a, newNationName: e.target.value } : a))}
-                                />
-                                <input 
-                                  type="color" 
-                                  className="w-8 h-8 rounded cursor-pointer"
-                                  value={action.newNationColor || '#ffffff'}
-                                  onChange={(e) => setTreatyActions(prev => prev.map(a => a.id === action.id ? { ...a, newNationColor: e.target.value } : a))}
-                                />
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span className="text-gray-400">Territories: {action.territories?.length || 0} selected</span>
-                                <button 
-                                  onClick={() => {
-                                    if (treatySelectMode?.actionId === action.id) {
-                                      setTreatySelectMode(null);
-                                    } else {
-                                      setTreatySelectMode({ actionId: action.id, type: 'create_nation' });
-                                    }
-                                  }}
-                                  className={`px-3 py-1 rounded text-xs font-bold ${treatySelectMode?.actionId === action.id ? 'bg-yellow-500 text-black' : 'bg-white/10 hover:bg-white/20'}`}
-                                >
-                                  {treatySelectMode?.actionId === action.id ? 'Done Selecting' : 'Select on Map'}
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-bold text-gray-400 mb-1">Conditions (Constructor)</label>
-                    <div className="flex gap-2 mb-2">
-                      <select id="treatyConditionSelect" className="flex-1 bg-black/50 border border-white/10 rounded p-2 text-white">
-                        <option value="timer">Timer / Duration</option>
-                        <option value="multi_join">Multi-Entry (Anyone can join)</option>
-                        <option value="custom">Custom Condition</option>
-                      </select>
-                      <input 
-                        type="text" 
-                        placeholder="Description..." 
-                        value={treatyConditionDesc}
-                        onChange={(e) => setTreatyConditionDesc(e.target.value)}
-                        className="flex-1 bg-black/50 border border-white/10 rounded p-2 text-white"
-                      />
-                      <button 
-                        onClick={() => {
-                          const type = (document.getElementById('treatyConditionSelect') as HTMLSelectElement).value as any;
-                          if (treatyConditionDesc.trim()) {
-                            setTreatyConditions([...treatyConditions, { id: Math.random().toString(), type, description: treatyConditionDesc.trim() }]);
-                            setTreatyConditionDesc('');
-                          }
-                        }}
-                        className="px-4 bg-purple-600 hover:bg-purple-500 rounded font-bold"
-                      >
-                        Add Condition
-                      </button>
-                    </div>
-                    <div className="space-y-2">
-                      {treatyConditions.map(cond => (
-                        <div key={cond.id} className="bg-white/5 border border-white/10 p-2 rounded text-sm flex flex-col gap-2">
-                          <div className="flex justify-between items-center">
-                            <div>
-                              <span className="font-bold text-purple-400 mr-2">[{cond.type.replace('_', ' ').toUpperCase()}]</span>
-                              {cond.description}
-                            </div>
-                            <button onClick={() => setTreatyConditions(treatyConditions.filter(c => c.id !== cond.id))} className="text-red-400 hover:text-red-300">×</button>
-                          </div>
-                          
-                          {cond.type === 'timer' && (
-                            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-white/10">
-                              <span className="text-gray-400">Duration (seconds):</span>
-                              <input 
-                                type="number" 
-                                className="bg-black/50 border border-white/10 rounded px-2 py-1 w-24"
-                                value={cond.duration ? cond.duration / 1000 : ''}
-                                onChange={(e) => setTreatyConditions(prev => prev.map(c => c.id === cond.id ? { ...c, duration: parseInt(e.target.value) * 1000 } : c))}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <input type="checkbox" id="treatyPublic" className="w-4 h-4" />
-                    <label htmlFor="treatyPublic" className="text-sm text-gray-300">Public (Anyone can join without invite)</label>
-                  </div>
-                  
-                  <button 
-                    onClick={() => {
-                      const name = (document.getElementById('treatyName') as HTMLInputElement).value;
-                      const text = (document.getElementById('treatyText') as HTMLTextAreaElement).value;
-                      const isPublic = (document.getElementById('treatyPublic') as HTMLInputElement).checked;
-                      
-                      if (!name) return alert('Please enter a name');
-                      
-                      createTreaty({
-                        name,
-                        text,
-                        isPublic,
-                        invited: treatyInvited,
-                        actions: treatyActions,
-                        conditions: treatyConditions
-                      });
-                      
-                      setTreatyActions([]);
-                      setTreatyConditions([]);
-                      setTreatyInvited([]);
-                      setTreatyView('list');
-                    }}
-                    className="w-full py-2 bg-yellow-600 hover:bg-yellow-500 text-white font-bold rounded-lg"
-                  >
-                    Create Draft
-                  </button>
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -1954,6 +1756,7 @@ export default function App() {
                               setPlacingBattle(war.id);
                               setIsPaintingMode(false);
                               setIsRollMode(false);
+                              setIsCityMode(false);
                               setShowWars(false); // Hide UI to place battle
                             }}
                             className="flex-1 bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 px-4 rounded transition-colors"
@@ -1965,6 +1768,7 @@ export default function App() {
                               setProposingPeace(war.id);
                               setIsPaintingMode(true);
                               setIsRollMode(false);
+                              setIsCityMode(false);
                               setPeaceClaims({});
                               setPeacePuppets({});
                               setShowWars(false); // Hide UI to paint claims
@@ -2270,8 +2074,14 @@ export default function App() {
                   </div>
 
                   <div>
-                    <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Alliance Flag (Optional)</label>
-                    <input type="file" accept="image/*" onChange={handleAllianceFlagUpload} className="text-xs w-full mb-2" />
+                    <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Alliance Flag (URL or File)</label>
+                    <div className="flex gap-2 mb-2">
+                      <input type="text" value={newAllianceFlag} onChange={e => setNewAllianceFlag(e.target.value)} placeholder="https://..." className="flex-1 bg-white/5 border border-white/10 rounded p-2 text-sm focus:outline-none focus:border-purple-500" />
+                      <label className="cursor-pointer bg-white/10 hover:bg-white/20 border border-white/10 rounded px-3 py-2 flex items-center justify-center transition-colors">
+                        <Upload className="w-4 h-4 text-gray-300" />
+                        <input type="file" accept="image/*" onChange={handleAllianceFlagUpload} className="hidden" />
+                      </label>
+                    </div>
                     {newAllianceFlag && (
                       <div className="h-16 border border-white/10 rounded overflow-hidden flex items-center justify-center bg-black/50">
                         <img src={newAllianceFlag} alt="Preview" className="h-full object-contain" />
@@ -2298,82 +2108,153 @@ export default function App() {
                     
                     return (
                       <>
-                        <div className="flex items-start gap-4 bg-white/5 p-4 rounded-lg border border-white/10">
-                          {alliance.flag ? (
-                            <img src={alliance.flag} alt="Flag" className="h-16 w-auto object-contain rounded shadow-lg border border-white/20" />
-                          ) : (
-                            <div className="w-24 h-16 bg-gray-800 rounded border border-white/20 flex items-center justify-center">
-                              <Globe className="w-8 h-8 text-gray-500" />
+                        {showAllianceSettings ? (
+                          <div className="space-y-4">
+                            <div className="flex justify-between items-center mb-4">
+                              <h3 className="text-xl font-bold flex items-center gap-2"><Settings className="w-5 h-5 text-gray-400"/> {language === 'ru' ? 'Настройки альянса' : 'Alliance Settings'}</h3>
+                              <button onClick={() => setShowAllianceSettings(false)} className="text-gray-400 hover:text-white"><X className="w-5 h-5"/></button>
                             </div>
-                          )}
-                          <div className="flex-1">
-                            <h3 className="text-xl font-bold"><EntityName entity={alliance} /></h3>
-                            <p className="text-sm text-purple-400 font-bold">{alliance.type} Alliance</p>
-                          </div>
-                        </div>
-
-                        <div className="bg-white/5 p-4 rounded-lg border border-white/10">
-                          <h4 className="text-xs uppercase tracking-wider text-gray-400 mb-2">Description</h4>
-                          <p className="text-sm text-gray-200 whitespace-pre-wrap">{alliance.description}</p>
-                        </div>
-
-                        <div className="bg-white/5 p-4 rounded-lg border border-white/10">
-                          <h4 className="text-xs uppercase tracking-wider text-gray-400 mb-2">Members ({alliance.members.length})</h4>
-                          <div className="space-y-1 max-h-32 overflow-y-auto custom-scrollbar">
-                            {alliance.members.map(memberId => {
-                              const memberNat = nations.find(n => n.id === memberId);
-                              const memberUnion = unions.find(u => u.id === memberId);
-                              const entity = memberNat || memberUnion;
-                              if (!entity) return null;
-                              
-                              return (
-                                <div key={memberId} className="flex items-center gap-2 text-sm">
-                                  <EntityName entity={entity} />
-                                  {memberId === alliance.founderId && <span className="text-xs text-yellow-500 ml-auto">Founder</span>}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-
-                        {myDiplomaticEntity && myDiplomaticEntity.isFounder && alliance.founderId === myDiplomaticEntity.id && allianceRequests.filter(r => r.allianceId === alliance.id).length > 0 && (
-                          <div className="bg-white/5 p-4 rounded-lg border border-white/10">
-                            <h4 className="text-xs uppercase tracking-wider text-yellow-500 mb-2">Pending Requests</h4>
-                            <div className="space-y-2">
-                              {allianceRequests.filter(r => r.allianceId === alliance.id).map(req => (
-                                <div key={req.id} className="flex items-center justify-between text-sm bg-black/40 p-2 rounded border border-white/5">
-                                  <span>{req.nationName}</span>
-                                  <div className="flex gap-2">
-                                    <button onClick={() => approveAllianceJoin(req.id)} className="text-green-400 hover:text-green-300"><Check className="w-4 h-4" /></button>
-                                    <button onClick={() => rejectAllianceJoin(req.id)} className="text-red-400 hover:text-red-300"><X className="w-4 h-4" /></button>
-                                  </div>
-                                </div>
-                              ))}
+                            <div>
+                              <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('allianceName')}</label>
+                              <input type="text" value={editAllianceName} onChange={e => setEditAllianceName(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500" />
                             </div>
+                            <div>
+                              <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{language === 'ru' ? 'Описание' : 'Description'}</label>
+                              <textarea value={editAllianceDesc} onChange={e => setEditAllianceDesc(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500 min-h-[80px]" />
+                            </div>
+                            <div>
+                              <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('flag')}</label>
+                              <div className="flex gap-2">
+                                <input type="text" value={editAllianceFlag} onChange={e => setEditAllianceFlag(e.target.value)} placeholder="https://..." className="flex-1 bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-purple-500" />
+                                <label className="cursor-pointer bg-white/10 hover:bg-white/20 border border-white/10 rounded px-3 py-2 flex items-center justify-center transition-colors">
+                                  <Upload className="w-4 h-4 text-gray-300" />
+                                  <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      const reader = new FileReader();
+                                      reader.onload = (event) => {
+                                        if (event.target?.result) {
+                                          setEditAllianceFlag(event.target.result as string);
+                                        }
+                                      };
+                                      reader.readAsDataURL(file);
+                                    }
+                                  }} />
+                                </label>
+                              </div>
+                              {editAllianceFlag && (
+                                <div className="mt-2 flex justify-center">
+                                  <img src={editAllianceFlag} alt="Preview" className="h-16 w-auto object-contain rounded border border-white/20" />
+                                </div>
+                              )}
+                            </div>
+                            <button 
+                              onClick={() => {
+                                useGameStore.getState().updateAlliance(alliance.id, {
+                                  name: editAllianceName,
+                                  description: editAllianceDesc,
+                                  flag: editAllianceFlag
+                                });
+                                setShowAllianceSettings(false);
+                              }}
+                              className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded transition-colors mt-4"
+                            >
+                              Сохранить изменения
+                            </button>
                           </div>
-                        )}
+                        ) : (
+                          <>
+                            <div className="flex items-start gap-4 bg-white/5 p-4 rounded-lg border border-white/10 relative">
+                              {myDiplomaticEntity && myDiplomaticEntity.isFounder && alliance.founderId === myDiplomaticEntity.id && (
+                                <button 
+                                  onClick={() => {
+                                    setEditAllianceName(alliance.name);
+                                    setEditAllianceDesc(alliance.description);
+                                    setEditAllianceFlag(alliance.flag || '');
+                                    setShowAllianceSettings(true);
+                                  }}
+                                  className="absolute top-2 right-2 bg-purple-600/50 hover:bg-purple-500 text-white text-xs font-bold p-1.5 rounded transition-colors"
+                                >
+                                  <Settings className="w-4 h-4" />
+                                </button>
+                              )}
+                              {alliance.flag ? (
+                                <img src={alliance.flag} alt="Flag" className="h-16 w-auto object-contain rounded shadow-lg border border-white/20" />
+                              ) : (
+                                <div className="w-24 h-16 bg-gray-800 rounded border border-white/20 flex items-center justify-center">
+                                  <Globe className="w-8 h-8 text-gray-500" />
+                                </div>
+                              )}
+                              <div className="flex-1">
+                                <h3 className="text-xl font-bold"><EntityName entity={alliance} /></h3>
+                                <p className="text-sm text-purple-400 font-bold">{alliance.type} Alliance</p>
+                              </div>
+                            </div>
 
-                        {myDiplomaticEntity && myDiplomaticEntity.isFounder && (
-                          <button 
-                            onClick={() => {
-                              if (isMember) {
-                                leaveAlliance(alliance.id);
-                              } else {
-                                const hasRequested = allianceRequests.some(r => r.allianceId === alliance.id && r.nationId === myDiplomaticEntity.id);
-                                if (!hasRequested) requestJoinAlliance(alliance.id);
-                              }
-                            }}
-                            disabled={!isMember && allianceRequests.some(r => r.allianceId === alliance.id && r.nationId === myDiplomaticEntity.id)}
-                            className={`w-full font-bold py-2 px-4 rounded transition-colors ${
-                              isMember 
-                                ? 'bg-red-600/20 text-red-400 hover:bg-red-600/40 border border-red-500/50' 
-                                : allianceRequests.some(r => r.allianceId === alliance.id && r.nationId === myDiplomaticEntity.id)
-                                  ? 'bg-gray-600 text-gray-300 cursor-not-allowed'
-                                  : 'bg-purple-600 hover:bg-purple-500 text-white'
-                            }`}
-                          >
-                            {isMember ? 'Leave Alliance' : allianceRequests.some(r => r.allianceId === alliance.id && r.nationId === myDiplomaticEntity.id) ? 'Request Sent' : 'Request to Join'}
-                          </button>
+                            <div className="bg-white/5 p-4 rounded-lg border border-white/10">
+                              <h4 className="text-xs uppercase tracking-wider text-gray-400 mb-2">Description</h4>
+                              <p className="text-sm text-gray-200 whitespace-pre-wrap">{alliance.description}</p>
+                            </div>
+
+                            <div className="bg-white/5 p-4 rounded-lg border border-white/10">
+                              <h4 className="text-xs uppercase tracking-wider text-gray-400 mb-2">Members ({alliance.members.length})</h4>
+                              <div className="space-y-1 max-h-32 overflow-y-auto custom-scrollbar">
+                                {alliance.members.map(memberId => {
+                                  const memberNat = nations.find(n => n.id === memberId);
+                                  const memberUnion = unions.find(u => u.id === memberId);
+                                  const entity = memberNat || memberUnion;
+                                  if (!entity) return null;
+                                  
+                                  return (
+                                    <div key={memberId} className="flex items-center gap-2 text-sm">
+                                      <EntityName entity={entity} />
+                                      {memberId === alliance.founderId && <span className="text-xs text-yellow-500 ml-auto">Founder</span>}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {myDiplomaticEntity && myDiplomaticEntity.isFounder && alliance.founderId === myDiplomaticEntity.id && allianceRequests.filter(r => r.allianceId === alliance.id).length > 0 && (
+                              <div className="bg-white/5 p-4 rounded-lg border border-white/10">
+                                <h4 className="text-xs uppercase tracking-wider text-yellow-500 mb-2">Pending Requests</h4>
+                                <div className="space-y-2">
+                                  {allianceRequests.filter(r => r.allianceId === alliance.id).map(req => (
+                                    <div key={req.id} className="flex items-center justify-between text-sm bg-black/40 p-2 rounded border border-white/5">
+                                      <span>{req.nationName}</span>
+                                      <div className="flex gap-2">
+                                        <button onClick={() => approveAllianceJoin(req.id)} className="text-green-400 hover:text-green-300"><Check className="w-4 h-4" /></button>
+                                        <button onClick={() => rejectAllianceJoin(req.id)} className="text-red-400 hover:text-red-300"><X className="w-4 h-4" /></button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {myDiplomaticEntity && myDiplomaticEntity.isFounder && (
+                              <button 
+                                onClick={() => {
+                                  if (isMember) {
+                                    leaveAlliance(alliance.id);
+                                  } else {
+                                    const hasRequested = allianceRequests.some(r => r.allianceId === alliance.id && r.nationId === myDiplomaticEntity.id);
+                                    if (!hasRequested) requestJoinAlliance(alliance.id);
+                                  }
+                                }}
+                                disabled={!isMember && allianceRequests.some(r => r.allianceId === alliance.id && r.nationId === myDiplomaticEntity.id)}
+                                className={`w-full font-bold py-2 px-4 rounded transition-colors ${
+                                  isMember 
+                                    ? 'bg-red-600/20 text-red-400 hover:bg-red-600/40 border border-red-500/50' 
+                                    : allianceRequests.some(r => r.allianceId === alliance.id && r.nationId === myDiplomaticEntity.id)
+                                      ? 'bg-gray-600 text-gray-300 cursor-not-allowed'
+                                      : 'bg-purple-600 hover:bg-purple-500 text-white'
+                                }`}
+                              >
+                                {isMember ? 'Leave Alliance' : allianceRequests.some(r => r.allianceId === alliance.id && r.nationId === myDiplomaticEntity.id) ? 'Request Sent' : 'Request to Join'}
+                              </button>
+                            )}
+                          </>
                         )}
                       </>
                     );
@@ -2585,22 +2466,22 @@ export default function App() {
                         {showUnionSettings ? (
                           <div className="space-y-4">
                             <div className="flex justify-between items-center mb-4">
-                              <h3 className="text-xl font-bold flex items-center gap-2"><Settings className="w-5 h-5 text-gray-400"/> Настройки союза</h3>
+                              <h3 className="text-xl font-bold flex items-center gap-2"><Settings className="w-5 h-5 text-gray-400"/> {language === 'ru' ? 'Настройки союза' : 'Union Settings'}</h3>
                               <button onClick={() => setShowUnionSettings(false)} className="text-gray-400 hover:text-white"><X className="w-5 h-5"/></button>
                             </div>
                             <div>
-                              <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Название союза</label>
+                              <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{language === 'ru' ? 'Название союза' : 'Union Name'}</label>
                               <input type="text" value={editUnionName} onChange={e => setEditUnionName(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
                             </div>
                             <div>
-                              <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Цвет союза</label>
+                              <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{language === 'ru' ? 'Цвет союза' : 'Union Color'}</label>
                               <div className="flex gap-2">
                                 <input type="color" value={editUnionColor} onChange={e => setEditUnionColor(e.target.value)} className="w-10 h-10 rounded cursor-pointer bg-transparent border-0 p-0" />
                                 <input type="text" value={editUnionColor} onChange={e => setEditUnionColor(e.target.value)} className="flex-1 bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 uppercase" />
                               </div>
                             </div>
                             <div>
-                              <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Флаг (URL или файл)</label>
+                              <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('flag')}</label>
                               <div className="flex gap-2">
                                 <input type="text" value={editUnionFlag} onChange={e => setEditUnionFlag(e.target.value)} placeholder="https://..." className="flex-1 bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" />
                                 <label className="cursor-pointer bg-white/10 hover:bg-white/20 border border-white/10 rounded px-3 py-2 flex items-center justify-center transition-colors">
@@ -2778,7 +2659,7 @@ export default function App() {
             <form onSubmit={handleSpawnFormSubmit} className="space-y-4">
               <div className="flex gap-4">
                 <div className="flex-1">
-                  <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Full Name</label>
+                  <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('fullName')}</label>
                   <input
                     required
                     type="text"
@@ -2789,7 +2670,7 @@ export default function App() {
                   />
                 </div>
                 <div className="w-24">
-                  <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Color</label>
+                  <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('color')}</label>
                   <input
                     type="color"
                     value={color}
@@ -2800,7 +2681,7 @@ export default function App() {
               </div>
               
               <div>
-                <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Short Name</label>
+                <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('shortName')}</label>
                 <input
                   required
                   type="text"
@@ -2812,24 +2693,32 @@ export default function App() {
               </div>
               
               <div>
-                <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Ideology</label>
-                <select
+                <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('ideology')}</label>
+                <input
+                  type="text"
                   value={ideology}
                   onChange={(e) => setIdeology(e.target.value)}
+                  placeholder={t('ideology')}
                   className="w-full bg-[#1a1a1a] border border-white/10 rounded p-2 text-sm focus:outline-none focus:border-blue-500 transition-colors"
-                >
-                  {IDEOLOGIES.map((id) => (
-                    <option key={id} value={id}>{id}</option>
-                  ))}
-                </select>
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('loreDesc')}</label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder={t('lorePlaceholder')}
+                  className="w-full bg-white/5 border border-white/10 rounded p-2 text-sm focus:outline-none focus:border-blue-500 transition-colors resize-none h-20"
+                />
               </div>
 
               <div className="pt-2 border-t border-white/10">
-                <label className="block text-xs uppercase tracking-wider text-gray-400 mb-2">National Flag</label>
+                <label className="block text-xs uppercase tracking-wider text-gray-400 mb-2">{t('flag')}</label>
                 <div className="flex gap-2 mb-2">
-                  <button type="button" onClick={() => setFlagType('preset')} className={`flex-1 py-1 text-xs rounded border ${flagType === 'preset' ? 'bg-blue-600/20 border-blue-500 text-blue-300' : 'border-white/10 text-gray-400'}`}>Search Flags</button>
-                  <button type="button" onClick={() => setFlagType('upload')} className={`flex-1 py-1 text-xs rounded border ${flagType === 'upload' ? 'bg-blue-600/20 border-blue-500 text-blue-300' : 'border-white/10 text-gray-400'}`}>Upload Custom</button>
-                  <button type="button" onClick={() => setFlagType('url')} className={`flex-1 py-1 text-xs rounded border ${flagType === 'url' ? 'bg-blue-600/20 border-blue-500 text-blue-300' : 'border-white/10 text-gray-400'}`}>URL</button>
+                  <button type="button" onClick={() => setFlagType('preset')} className={`flex-1 py-1 text-xs rounded border ${flagType === 'preset' ? 'bg-blue-600/20 border-blue-500 text-blue-300' : 'border-white/10 text-gray-400'}`}>{t('searchFlags')}</button>
+                  <button type="button" onClick={() => setFlagType('upload')} className={`flex-1 py-1 text-xs rounded border ${flagType === 'upload' ? 'bg-blue-600/20 border-blue-500 text-blue-300' : 'border-white/10 text-gray-400'}`}>{t('uploadCustom')}</button>
+                  <button type="button" onClick={() => setFlagType('url')} className={`flex-1 py-1 text-xs rounded border ${flagType === 'url' ? 'bg-blue-600/20 border-blue-500 text-blue-300' : 'border-white/10 text-gray-400'}`}>{t('url')}</button>
                 </div>
                 
                 {flagType === 'preset' ? (
@@ -2890,23 +2779,33 @@ export default function App() {
                   onChange={(e) => setTargetNationId(e.target.value)}
                   className="w-full bg-[#1a1a1a] border border-white/10 rounded p-2 text-sm focus:outline-none focus:border-blue-500 transition-colors mb-2"
                 >
-                  <option value="">Free Territory (Independent)</option>
+                  <option value="">{language === 'ru' ? 'Свободная Территория (Независимая)' : 'Free Territory (Independent)'}</option>
                   {nations.map((n) => (
-                    <option key={n.id} value={n.id}>Inside {n.name}</option>
+                    <option key={n.id} value={n.id}>{language === 'ru' ? 'Внутри' : 'Inside'} {n.name}</option>
                   ))}
                 </select>
 
                 {targetNationId && (
                   <div>
-                    <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">Dependency Status</label>
+                    <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('depStatus')}</label>
                     <select
                       value={status}
                       onChange={(e) => setStatus(e.target.value)}
                       className="w-full bg-[#1a1a1a] border border-white/10 rounded p-2 text-sm focus:outline-none focus:border-blue-500 transition-colors"
                     >
-                      {DEPENDENCY_STATUSES.map((s) => (
-                        <option key={s} value={s}>{s}</option>
-                      ))}
+                      {DEPENDENCY_STATUSES.map((s) => {
+                         const map: Record<string, any> = {
+                           'Independent': {en: 'Independent', ru: 'Независимый'},
+                           'Vassal': {en: 'Vassal', ru: 'Вассал'},
+                           'Colony': {en: 'Colony', ru: 'Колония'},
+                           'Protectorate': {en: 'Protectorate', ru: 'Протекторат'},
+                           'Puppet State': {en: 'Puppet State', ru: 'Марионетка'},
+                           'Territory': {en: 'Territory', ru: 'Территория'},
+                           'Autonomous Region': {en: 'Autonomous Region', ru: 'Автономия'},
+                           'Occupied': {en: 'Occupied', ru: 'Оккупирована'}
+                         };
+                         return <option key={s} value={s}>{map[s]?.[language] || s}</option>;
+                      })}
                     </select>
                   </div>
                 )}
@@ -2922,16 +2821,35 @@ export default function App() {
           </div>
         )}
 
+        {/* Settings Overlay */}
+        {showSettings && (
+          <div className="absolute top-20 left-20 w-64 bg-black/90 backdrop-blur-xl border border-white/20 rounded-xl pointer-events-auto shadow-2xl overflow-hidden flex flex-col z-50">
+            <div className="flex items-center justify-between p-4 border-b border-white/10 bg-white/5">
+              <h2 className="text-xl font-bold flex items-center gap-2"><Settings className="w-5 h-5 text-gray-400"/> {t('settings')}</h2>
+              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-white"><X className="w-5 h-5"/></button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-xs uppercase tracking-wider text-gray-400 mb-2">{t('language')}</label>
+                <div className="flex gap-2">
+                   <button onClick={() => setLanguage('ru')} className={`flex-1 py-1 rounded border ${language === 'ru' ? 'bg-blue-600/20 border-blue-500 text-blue-400' : 'border-white/10 text-gray-400 hover:bg-white/5'}`}>Русский</button>
+                   <button onClick={() => setLanguage('en')} className={`flex-1 py-1 rounded border ${language === 'en' ? 'bg-blue-600/20 border-blue-500 text-blue-400' : 'border-white/10 text-gray-400 hover:bg-white/5'}`}>English</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Drawing Mode Overlay */}
         {!myNation && setupPhase === 'draw' && !showAlliances && (
           <div className="self-center bg-black/80 backdrop-blur-xl border border-blue-500/50 p-6 rounded-xl w-full max-w-md pointer-events-auto shadow-2xl text-center">
-            <h2 className="text-xl font-bold mb-2 text-blue-400">Draw Your Borders</h2>
+            <h2 className="text-xl font-bold mb-2 text-blue-400">{t('drawBorders')}</h2>
             <p className="text-sm text-gray-300 mb-4">
               Click and drag on the map to claim land.
             </p>
             
             <div className="flex justify-between items-center mb-6 bg-white/5 p-3 rounded">
-              <span className="text-sm uppercase tracking-wider text-gray-400">Territory</span>
+              <span className="text-sm uppercase tracking-wider text-gray-400">{t('territory')}</span>
               <span className={`font-mono font-bold ${draftTerritories.length === MAX_TERRITORY ? 'text-yellow-400' : 'text-white'}`}>
                 {draftTerritories.length} / {MAX_TERRITORY}
               </span>
@@ -3028,6 +2946,7 @@ export default function App() {
                                   setPlacingBattle(activeWar.id);
                                   setIsPaintingMode(false);
                                   setIsRollMode(false);
+                                  setIsCityMode(false);
                                   setSelectedNationId(null);
                                 }}
                                 className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition-colors flex items-center justify-center gap-2"
@@ -3069,41 +2988,153 @@ export default function App() {
                     </h3>
                     <p className="text-sm text-gray-400 mb-4">{n.shortName}</p>
                     
-                    <div className="space-y-2 text-sm">
-                      {nationUnion && (
-                        <div className="flex justify-between border-b border-white/5 pb-1">
-                          <span className="text-green-400 font-bold flex items-center gap-1"><Shield className="w-3 h-3"/> Union</span>
-                          <span className="text-green-300 font-bold"><EntityName entity={nationUnion} /></span>
-                        </div>
-                      )}
-                      <div className="flex justify-between border-b border-white/5 pb-1">
-                        <span className="text-gray-400">Ideology</span>
-                        <span>{n.ideology}</span>
-                      </div>
-                      <div className="flex justify-between border-b border-white/5 pb-1">
-                        <span className="text-gray-400">Status</span>
-                        <span>{n.status}</span>
-                      </div>
-                      <div className="flex justify-between border-b border-white/5 pb-1">
-                        <span className="text-gray-400">Territory Size</span>
-                        <span>{n.territories.length} px</span>
-                      </div>
+                    <div className="flex gap-2 mb-4 border-b border-white/5 pb-2">
+                      <button 
+                        onClick={() => setNationInfoTab('info')} 
+                        className={`flex-1 py-1 text-xs uppercase tracking-wider font-bold rounded transition-colors ${nationInfoTab === 'info' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-white/10'}`}
+                      >
+                        {t('tabInfo')}
+                      </button>
+                      <button 
+                        onClick={() => setNationInfoTab('politics')} 
+                        className={`flex-1 py-1 text-xs uppercase tracking-wider font-bold rounded transition-colors ${nationInfoTab === 'politics' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-white/10'}`}
+                      >
+                        {t('tabPolitics')}
+                      </button>
+                      <button 
+                        onClick={() => setNationInfoTab('lore')} 
+                        className={`flex-1 py-1 text-xs uppercase tracking-wider font-bold rounded transition-colors ${nationInfoTab === 'lore' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-white/10'}`}
+                      >
+                        {t('tabLore')}
+                      </button>
                     </div>
 
-                    {nationAlliances.length > 0 && (
-                      <div className="mt-4 pt-4 border-t border-white/10">
-                        <h4 className="text-xs uppercase tracking-wider text-gray-400 mb-2">Alliances</h4>
-                        <div className="flex flex-wrap gap-2">
-                          {nationAlliances.map(a => (
-                            <span key={a.id} className="bg-purple-600/20 border border-purple-500/30 text-purple-300 text-xs px-2 py-1 rounded">
-                              {a.name}
-                            </span>
-                          ))}
-                        </div>
+                    {nationInfoTab === 'lore' ? (
+                      <div className="space-y-2 text-sm">
+                        {n.description ? (
+                          <div className="bg-white/5 p-4 rounded-lg text-gray-300 italic whitespace-pre-wrap leading-relaxed border border-white/10">
+                            {n.description}
+                          </div>
+                        ) : (
+                          <div className="text-center text-gray-500 py-8 italic bg-black/20 rounded-lg border border-white/5">
+                            {t('noLore')}
+                          </div>
+                        )}
                       </div>
-                    )}
+                    ) : nationInfoTab === 'politics' ? (
+                      <div className="space-y-4">
+                        {n.parties && n.parties.length > 0 ? (
+                          <div className="bg-black/20 border border-white/5 rounded-lg p-3">
+                            <h4 className="text-sm font-bold text-gray-300 mb-4 text-center">{t('parties')}</h4>
+                            <div className="h-48">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                  <Pie
+                                    data={n.parties}
+                                    dataKey="percentage"
+                                    nameKey="name"
+                                    cx="50%"
+                                    cy="50%"
+                                    innerRadius={0}
+                                    outerRadius={80}
+                                    paddingAngle={0}
+                                    stroke="none"
+                                    strokeWidth={0}
+                                  >
+                                    {n.parties.map((entry, index) => (
+                                      <Cell key={`cell-${index}`} fill={entry.color} />
+                                    ))}
+                                  </Pie>
+                                  <Tooltip 
+                                    contentStyle={{ backgroundColor: 'rgba(0,0,0,0.8)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '4px' }}
+                                    itemStyle={{ color: '#fff' }}
+                                    formatter={(value: number, name: string, props: any) => [`${value}% - ${tMapIdeology(language, props.payload.ideology)}`, name]}
+                                  />
+                                </PieChart>
+                              </ResponsiveContainer>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 mt-2">
+                              {n.parties.sort((a, b) => b.percentage - a.percentage).map((party, idx) => (
+                                <div key={idx} className="flex flex-col text-xs bg-black/40 p-2 rounded">
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: party.color }}></span>
+                                    <span className="font-bold truncate">{party.name}</span>
+                                  </div>
+                                  <div className="flex justify-between items-center text-gray-400 mt-1">
+                                    <span>{party.percentage}%</span>
+                                    <span className="truncate ml-1">{tMapIdeology(language, party.ideology)}</span>
+                                  </div>
+                                  {party.leader && (
+                                    <div className="text-gray-500 mt-0.5 truncate">{t('leader')}: {party.leader}</div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center text-gray-500 py-8 italic bg-black/20 rounded-lg border border-white/5">
+                            {language === 'ru' ? 'В этой стране нет зарегистрированных партий.' : 'There are no registered parties in this nation.'}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="space-y-2 text-sm">
+                          {nationUnion && (
+                            <div className="flex justify-between border-b border-white/5 pb-1">
+                              <span className="text-green-400 font-bold flex items-center gap-1"><Shield className="w-3 h-3"/> Union</span>
+                              <span className="text-green-300 font-bold"><EntityName entity={nationUnion} /></span>
+                            </div>
+                          )}
+                          <div className="flex justify-between border-b border-white/5 pb-1">
+                            <span className="text-gray-400">{t('ideology')}</span>
+                            <span>{tMapIdeology(language, n.ideology)}</span>
+                          </div>
+                          <div className="flex justify-between border-b border-white/5 pb-1">
+                            <span className="text-gray-400">Status</span>
+                            <span>{n.status}</span>
+                          </div>
+                          <div className="flex justify-between border-b border-white/5 pb-1 items-center">
+                            <span className="text-gray-400">{t('gdp')}</span>
+                            <div className="text-right">
+                              <span className="font-bold text-green-400">${n.gdp?.toLocaleString() || 1000}</span>
+                              {n.gdpChange !== undefined && (
+                                <span className={`ml-2 text-xs ${n.gdpChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                                  {n.gdpChange >= 0 ? '+' : ''}{n.gdpChange}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex justify-between border-b border-white/5 pb-1">
+                            <span className="text-gray-400">{t('economy')}</span>
+                            <span>{tMapEconomy(language, n.economyState || "Стагнация") || 'Стагнация'}</span>
+                          </div>
+                          <div className="flex justify-between border-b border-white/5 pb-1">
+                            <span className="text-gray-400">Territory Size</span>
+                            <span>{n.territories.length} px</span>
+                          </div>
+                          {n.cities && n.cities.length > 0 && (
+                            <div className="flex justify-between border-b border-white/5 pb-1">
+                              <span className="text-gray-400">Cities</span>
+                              <span>{n.cities.length}</span>
+                            </div>
+                          )}
+                        </div>
 
-                    {(() => {
+                        {nationAlliances.length > 0 && (
+                          <div className="mt-4 pt-4 border-t border-white/10">
+                            <h4 className="text-xs uppercase tracking-wider text-gray-400 mb-2">Alliances</h4>
+                            <div className="flex flex-wrap gap-2">
+                              {nationAlliances.map(a => (
+                                <span key={a.id} className="bg-purple-600/20 border border-purple-500/30 text-purple-300 text-xs px-2 py-1 rounded">
+                                  {a.name}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {(() => {
                       if (!myDiplomaticEntity) return null;
                       const activeWar = wars.find(w => w.status === 'active' && 
                         ((w.attackerId === myDiplomaticEntity.id && w.defenderId === n.id) || 
@@ -3117,6 +3148,7 @@ export default function App() {
                                 setPlacingBattle(activeWar.id);
                                 setIsPaintingMode(false);
                                 setIsRollMode(false);
+                                setIsCityMode(false);
                                 setSelectedNationId(null);
                               }}
                               className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition-colors flex items-center justify-center gap-2"
@@ -3129,6 +3161,8 @@ export default function App() {
                       }
                       return null;
                     })()}
+                      </>
+                    )}
                   </div>
                 </>
               );
@@ -3250,12 +3284,27 @@ export default function App() {
 
         {/* Action Buttons (Bottom Right) */}
         {myNation && (
-          <div className="absolute bottom-4 right-4 flex flex-col gap-2 pointer-events-auto">
+          <div className="absolute bottom-4 right-4 flex flex-row justify-end gap-2 pointer-events-auto">
+            <button 
+              onClick={() => {
+                setIsCityMode(!isCityMode);
+                if (!isCityMode) {
+                  setIsPaintingMode(false);
+                  setIsRollMode(false);
+                  setPlacingBattle(null);
+                }
+              }} 
+              className={`relative bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-full flex items-center justify-center transition-colors shadow-lg ${isCityMode ? 'bg-blue-500/50 hover:bg-blue-500/70 border-blue-500/50' : 'hover:bg-gray-800/80'}`}
+              title={t('buildCity')}
+            >
+              <Landmark className={`w-6 h-6 ${isCityMode ? 'text-white' : 'text-blue-400'}`} /> 
+            </button>
             <button 
               onClick={() => {
                 setIsRollMode(!isRollMode);
                 if (!isRollMode) {
                   setIsPaintingMode(false);
+                  setIsCityMode(false);
                   setPlacingBattle(null);
                 }
               }} 
@@ -3272,6 +3321,110 @@ export default function App() {
           <div className="absolute top-20 left-1/2 -translate-x-1/2 bg-green-600/90 backdrop-blur-md text-white px-6 py-3 rounded-lg shadow-2xl z-50 font-bold border border-green-400/50 flex items-center gap-2 animate-in fade-in slide-in-from-top-4">
             <Check className="w-5 h-5" />
             {toast}
+          </div>
+        )}
+
+        {/* City Creation Modal */}
+        {showCityModal && selectedTerritoryIdx !== null && (
+          <div className="absolute top-20 left-4 w-[350px] bg-black/90 backdrop-blur-xl border border-white/20 rounded-xl pointer-events-auto shadow-2xl overflow-hidden flex flex-col z-50">
+            <div className="flex items-center justify-between p-4 border-b border-white/10 bg-white/5">
+              <h2 className="text-xl font-bold flex items-center gap-2"><Landmark className="w-5 h-5 text-blue-400"/> {t('foundCityTitle')}</h2>
+              <button 
+                onClick={() => { 
+                  setShowCityModal(false); 
+                  setNewCityName(''); 
+                }} 
+                className="text-gray-400 hover:text-white"
+              >
+                <X className="w-5 h-5"/>
+              </button>
+            </div>
+            <div className="p-4 flex flex-col gap-4">
+              <p className="text-sm text-gray-400">{t('foundCityDesc')}</p>
+              <input
+                type="text"
+                value={newCityName}
+                onChange={e => setNewCityName(e.target.value)}
+                placeholder={t('cityName')}
+                className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                autoFocus
+              />
+              <button
+                onClick={() => {
+                  if (newCityName.trim()) {
+                    useGameStore.getState().createCity(newCityName.trim(), selectedTerritoryIdx);
+                    setShowCityModal(false);
+                    setNewCityName('');
+                    setSelectedTerritoryIdx(null);
+                  }
+                }}
+                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded transition-colors"
+              >
+                Основать
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* City Details Modal */}
+        {selectedCity && (
+          <div className="absolute top-20 left-4 w-[350px] max-h-[calc(100vh-140px)] bg-black/90 backdrop-blur-xl border border-white/20 rounded-xl pointer-events-auto shadow-2xl overflow-hidden flex flex-col z-50">
+            <div className="flex items-center justify-between p-4 border-b border-white/10 bg-white/5">
+              <h2 className="text-xl font-bold flex items-center gap-2"><Landmark className="w-5 h-5 text-blue-400"/> {t('cityInfo')}</h2>
+              <button onClick={() => setSelectedCity(null)} className="text-gray-400 hover:text-white"><X className="w-5 h-5"/></button>
+            </div>
+            <div className="p-4 flex-1 overflow-y-auto custom-scrollbar">
+              {(() => {
+                const nation = nations.find(n => n.id === selectedCity.nationId);
+                const city = nation?.cities?.find(c => c.id === selectedCity.cityId);
+                const isMyCity = myNation && nation && myNation.id === nation.id;
+                
+                if (!city || !nation) return <p>{language === 'ru' ? 'Данные города не найдены' : 'City data not found'}</p>;
+
+                // Format population (e.g. 1000 -> 1 000)
+                const popDisplay = city.population ? city.population.toLocaleString('ru-RU') : t('noData');
+                
+                return (
+                  <div className="space-y-4">
+                    {isMyCity ? (
+                      <div>
+                        <label className="block text-xs uppercase tracking-wider text-gray-400 mb-1">{t('cityName')}</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            defaultValue={city.name}
+                            id="renameCityInput"
+                            className="flex-1 bg-black/40 border border-white/10 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                          />
+                          <button
+                            onClick={() => {
+                              const input = document.getElementById('renameCityInput') as HTMLInputElement;
+                              if (input && input.value.trim()) {
+                                useGameStore.getState().renameCity(city.id, input.value.trim());
+                                setSelectedCity(null);
+                              }
+                            }}
+                            className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded transition-colors text-sm"
+                          >
+                            Сохранить
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <h3 className="text-lg font-black tracking-tight">{city.name}</h3>
+                        <p className="text-sm text-gray-400">{t('belongsTo')}: {nation.shortName}</p>
+                      </div>
+                    )}
+                    
+                    <div className="bg-black/40 border border-white/5 p-4 rounded-lg flex items-center justify-between">
+                      <span className="text-gray-400 font-bold uppercase tracking-wider text-xs">{t('population')}</span>
+                      <span className="font-mono text-lg text-emerald-400 break-words">{popDisplay} {language === 'ru' ? 'чел.' : 'pop.'}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         )}
       </div>

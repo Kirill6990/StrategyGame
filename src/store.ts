@@ -9,6 +9,22 @@ interface ChatMessage {
   timestamp: number;
 }
 
+export interface City {
+  id: string;
+  name: string;
+  territoryIdx: number;
+  population?: number;
+}
+
+export interface PoliticalParty {
+  id: string;
+  name: string;
+  color: string;
+  ideology: string;
+  leader?: string;
+  percentage: number;
+}
+
 export interface Nation {
   id: string;
   name: string;
@@ -21,6 +37,14 @@ export interface Nation {
   territories: number[];
   occupations?: number[];
   flag?: string;
+  description?: string;
+  cities?: City[];
+  economyState?: string;
+  gdp?: number;
+  overheat?: number;
+  economyLockedUntil?: number;
+  gdpChange?: number;
+  parties?: PoliticalParty[];
 }
 
 export interface Alliance {
@@ -100,39 +124,6 @@ export interface PeaceTreaty {
   agreements: string[];
 }
 
-export interface TreatyAction {
-  id: string;
-  type: 'transfer_land' | 'demilitarized_zone' | 'create_nation' | 'resource_help' | 'custom';
-  description: string;
-  territories?: number[];
-  targetId?: string; // Who receives the land or resource
-  newNationName?: string;
-  newNationColor?: string;
-}
-
-export interface TreatyCondition {
-  id: string;
-  type: 'timer' | 'multi_join' | 'custom';
-  description: string;
-  duration?: number; // in milliseconds
-}
-
-export interface Treaty {
-  id: string;
-  name: string;
-  creatorId: string;
-  participants: string[];
-  invited: string[];
-  isPublic: boolean;
-  status: 'draft' | 'active' | 'expired' | 'denounced';
-  text: string;
-  actions: TreatyAction[];
-  conditions: TreatyCondition[];
-  agreements: string[];
-  createdAt: number;
-  activatedAt?: number;
-}
-
 export interface War {
   id: string;
   attackerId: string;
@@ -160,7 +151,6 @@ interface GameState {
   wars: War[];
   finishedWars: War[];
   colonizationBattles: Battle[];
-  treaties: Treaty[];
   myNation: Nation | null;
   pendingRequests: SpawnRequest[];
   spawnStatus: 'idle' | 'pending' | 'success' | 'rejected' | 'error';
@@ -182,6 +172,7 @@ interface GameState {
   approveAllianceJoin: (reqId: string) => void;
   rejectAllianceJoin: (reqId: string) => void;
   leaveAlliance: (allianceId: string) => void;
+  updateAlliance: (allianceId: string, data: Partial<Alliance>) => void;
   sendAllianceChatMessage: (allianceId: string, text: string) => void;
   createUnion: (data: any) => void;
   updateUnion: (unionId: string, data: Partial<Union>) => void;
@@ -202,13 +193,12 @@ interface GameState {
   placeColonizationBattle: (x: number, y: number) => void;
   startColonizationBattle: (battleId: string) => void;
   paintColonizationResult: (battleId: string, paintedTerritories: number[]) => void;
-  createTreaty: (data: Partial<Treaty>) => void;
-  joinTreaty: (treatyId: string) => void;
-  signTreaty: (treatyId: string) => void;
-  denounceTreaty: (treatyId: string) => void;
   updateNation: (data: Partial<Nation>) => void;
   disbandNation: () => void;
   publishNews: (text: string) => void;
+  createCity: (name: string, territoryIdx: number) => void;
+  renameCity: (cityId: string, newName: string) => void;
+  updateEconomyState: (state: string) => void;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -224,7 +214,6 @@ export const useGameStore = create<GameState>((set, get) => ({
   wars: [],
   finishedWars: [],
   colonizationBattles: [],
-  treaties: [],
   myNation: null,
   pendingRequests: [],
   spawnStatus: 'idle',
@@ -257,7 +246,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     
     newSocket.on('connect', () => set({ connected: true }));
     newSocket.on('disconnect', () => set({ connected: false }));
-    newSocket.on('gameState', (data: { nations: Nation[], chatHistory?: ChatMessage[], alliances?: Alliance[], unions?: Union[], newsHistory?: NewsItem[], allianceRequests?: AllianceRequest[], allianceChats?: Record<string, ChatMessage[]>, unSessions?: UNSession[], wars?: War[], finishedWars?: War[], colonizationBattles?: Battle[], treaties?: Treaty[] }) => {
+    newSocket.on('gameState', (data: { nations: Nation[], chatHistory?: ChatMessage[], alliances?: Alliance[], unions?: Union[], newsHistory?: NewsItem[], allianceRequests?: AllianceRequest[], allianceChats?: Record<string, ChatMessage[]>, unSessions?: UNSession[], wars?: War[], finishedWars?: War[], colonizationBattles?: Battle[] }) => {
       set({ 
         nations: data.nations, 
         chatMessages: data.chatHistory || [],
@@ -269,8 +258,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         unSessions: data.unSessions || [],
         wars: data.wars || [],
         finishedWars: data.finishedWars || [],
-        colonizationBattles: data.colonizationBattles || [],
-        treaties: data.treaties || []
+        colonizationBattles: data.colonizationBattles || []
       });
       const myNat = data.nations.find(n => n.ownerId === playerId);
       if (myNat) set({ myNation: myNat });
@@ -344,10 +332,6 @@ export const useGameStore = create<GameState>((set, get) => ({
     newSocket.on('colonizationBattleFinished', (battle: Battle) => set(state => ({
       colonizationBattles: state.colonizationBattles.filter(b => b.id !== battle.id)
     })));
-
-    newSocket.on('treatyCreated', (treaty: Treaty) => set(state => ({ treaties: [...state.treaties, treaty] })));
-    newSocket.on('treatyUpdated', (treaty: Treaty) => set(state => ({ treaties: state.treaties.map(t => t.id === treaty.id ? treaty : t) })));
-    newSocket.on('treatyDeleted', (treatyId: string) => set(state => ({ treaties: state.treaties.filter(t => t.id !== treatyId) })));
 
     newSocket.on('spawnRequest', (request: SpawnRequest) => set((state) => ({ pendingRequests: [...state.pendingRequests, request] })));
     newSocket.on('spawnPending', (data: { message: string }) => set({ spawnStatus: 'pending', spawnMessage: data.message }));
@@ -424,6 +408,13 @@ export const useGameStore = create<GameState>((set, get) => ({
     const { socket } = get();
     if (socket) {
       socket.emit('leaveAlliance', allianceId);
+    }
+  },
+
+  updateAlliance: (allianceId, data) => {
+    const { socket } = get();
+    if (socket) {
+      socket.emit('updateAlliance', { allianceId, ...data });
     }
   },
 
@@ -533,25 +524,6 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (socket) socket.emit('paintColonizationResult', { battleId, paintedTerritories });
   },
 
-  createTreaty: (data) => {
-    const { socket } = get();
-    if (socket) socket.emit('createTreaty', data);
-  },
-
-  joinTreaty: (treatyId) => {
-    const { socket } = get();
-    if (socket) socket.emit('joinTreaty', treatyId);
-  },
-
-  signTreaty: (treatyId) => {
-    const { socket } = get();
-    if (socket) socket.emit('signTreaty', treatyId);
-  },
-  denounceTreaty: (treatyId) => {
-    const { socket } = get();
-    if (socket) socket.emit('denounceTreaty', treatyId);
-  },
-
   publishNews: (text) => {
     const { socket } = get();
     if (socket) socket.emit('publishNews', text);
@@ -560,6 +532,21 @@ export const useGameStore = create<GameState>((set, get) => ({
   updateNation: (data) => {
     const { socket } = get();
     if (socket) socket.emit('updateNation', data);
+  },
+
+  createCity: (name, territoryIdx) => {
+    const { socket } = get();
+    if (socket) socket.emit('createCity', { name, territoryIdx });
+  },
+
+  renameCity: (cityId, newName) => {
+    const { socket } = get();
+    if (socket) socket.emit('renameCity', { cityId, newName });
+  },
+
+  updateEconomyState: (state) => {
+    const { socket } = get();
+    if (socket) socket.emit('updateEconomyState', { state });
   },
 
   disbandNation: () => {
