@@ -3,9 +3,30 @@ import { createServer as createViteServer } from 'vite';
 import { Server } from 'socket.io';
 import http from 'http';
 import path from 'path';
+import 'dotenv/config';
 
 async function startServer() {
   const app = express();
+  app.use(express.json({ limit: '10mb' }));
+  
+  app.post('/api/fetch-image', async (req, res) => {
+    try {
+      const { imageUrl } = req.body;
+      if (!imageUrl) return res.status(400).json({ error: 'No image URL provided' });
+      
+      const fetchResp = await fetch(imageUrl);
+      if (!fetchResp.ok) throw new Error('Failed to fetch image');
+      const arrayBuffer = await fetchResp.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      const mimeType = fetchResp.headers.get('content-type') || 'image/jpeg';
+      
+      res.json({ base64: buffer.toString('base64'), mimeType });
+    } catch (e: any) {
+      console.error('Fetch image error:', e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   const server = http.createServer(app);
   const io = new Server(server, { cors: { origin: '*' } });
   const PORT = 3000;
@@ -23,6 +44,9 @@ async function startServer() {
   const wars = new Map();
   const finishedWars = new Map();
   const colonizationBattles = new Map();
+  const mailChats = new Map();
+  const treaties = new Map();
+  const historicalNations = new Map();
   const lastNewsTime = new Map<string, number>();
 
   const getRandomColor = () => '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
@@ -39,6 +63,9 @@ async function startServer() {
     socket.join(playerId);
     console.log('User connected:', playerId);
     
+    const player = players.get(playerId);
+    const getMailChatsForPlayer = (natId: string) => Array.from(mailChats.values()).filter((c: any) => c.participants.includes(natId));
+    
     socket.emit('gameState', { 
       nations: Array.from(nations.values()), 
       chatHistory,
@@ -50,7 +77,14 @@ async function startServer() {
       unSessions: Array.from(unSessions.values()),
       wars: Array.from(wars.values()),
       finishedWars: Array.from(finishedWars.values()),
-      colonizationBattles: Array.from(colonizationBattles.values())
+      colonizationBattles: Array.from(colonizationBattles.values()),
+      treaties: Array.from(treaties.values()),
+      mailChats: player ? getMailChatsForPlayer(player.nationId) : [],
+      wikiNations: Array.from(historicalNations.values())
+    });
+
+    socket.on('getWikiData', () => {
+      socket.emit('wikiData', Array.from(historicalNations.values()));
     });
 
     socket.on('chatMessage', (data) => {
@@ -99,6 +133,7 @@ async function startServer() {
           cities: [],
           economyState: 'Стагнация',
           gdp: 1000,
+          budget: 1000000000,
           overheat: 0,
           economyLockedUntil: 0,
           gdpChange: 0
@@ -106,9 +141,28 @@ async function startServer() {
         nations.set(nationId, newNation);
         players.set(playerId, { id: playerId, nationId });
         
+        historicalNations.set(nationId, {
+          id: nationId,
+          name: data.name,
+          color: newNation.color,
+          flag: data.flag || '',
+          ideology: data.ideology,
+          status: newNation.status,
+          customDescription: '',
+          lastTerritories: newNation.territories,
+          createdAt: Date.now(),
+          destroyedAt: null,
+          peakGdp: 1000,
+          peakTerritories: newNation.territories.length,
+          events: [{ timestamp: Date.now(), type: 'creation', description: `Nation ${data.name} was established.` }],
+          conquerorIds: [],
+          successors: []
+        });
+
         io.emit('nationCreated', newNation);
         socket.emit('spawnSuccess', newNation);
         addNews(`A new nation, ${newNation.name}, has emerged!`, 'spawn');
+        io.emit('wikiData', Array.from(historicalNations.values()));
       }
     });
 
@@ -133,6 +187,7 @@ async function startServer() {
             cities: [],
             economyState: 'Стагнация',
             gdp: 1000,
+            budget: 1000000000,
             overheat: 0,
             economyLockedUntil: 0,
             gdpChange: 0
@@ -141,10 +196,36 @@ async function startServer() {
           nations.set(nationId, newNation);
           players.set(request.from, { id: request.from, nationId });
           
+          historicalNations.set(nationId, {
+            id: nationId,
+            name: request.data.name,
+            color: newNation.color,
+            flag: request.data.flag || '',
+            ideology: request.data.ideology,
+            status: request.data.status,
+            customDescription: '',
+            lastTerritories: newNation.territories,
+            createdAt: Date.now(),
+            destroyedAt: null,
+            peakGdp: 1000,
+            peakTerritories: newNation.territories.length,
+            events: [{ timestamp: Date.now(), type: 'creation', description: `Nation ${request.data.name} was established as a territory of ${targetNation.name}.`, relatedEntityId: targetNation.id }],
+            conquerorIds: [],
+            successors: [],
+            predecessorId: targetNation.id
+          });
+
+          const parentWiki = historicalNations.get(targetNation.id);
+          if (parentWiki) {
+            if (!parentWiki.successors.includes(nationId)) parentWiki.successors.push(nationId);
+            parentWiki.events.push({ timestamp: Date.now(), type: 'successor', description: `${request.data.name} was formed from its territory.`, relatedEntityId: nationId });
+          }
+
           io.emit('nationCreated', newNation);
           io.to(request.from).emit('spawnSuccess', newNation);
           spawnRequests.delete(requestId);
           addNews(`A new nation, ${newNation.name}, has emerged!`, 'spawn');
+          io.emit('wikiData', Array.from(historicalNations.values()));
         }
       }
     });
@@ -203,6 +284,12 @@ async function startServer() {
       alliances.set(allianceId, newAlliance);
       io.emit('allianceCreated', newAlliance);
       addNews(`The ${newAlliance.name} alliance has been formed!`, 'alliance_create');
+      
+      const wiki = historicalNations.get(player.nationId);
+      if (wiki) {
+        wiki.events.push({ timestamp: Date.now(), type: 'history' as any, description: `Formed the ${data.type} alliance "${data.name}".` });
+        io.emit('wikiData', Array.from(historicalNations.values()));
+      }
     });
 
     socket.on('requestJoinAlliance', (allianceId) => {
@@ -254,6 +341,12 @@ async function startServer() {
             
             addNews(`${request.nationName} has joined ${alliance.name}!`, 'alliance_join');
             
+            const wiki = historicalNations.get(request.nationId);
+            if (wiki) {
+              wiki.events.push({ timestamp: Date.now(), type: 'history' as any, description: `Joined the alliance "${alliance.name}".` });
+              io.emit('wikiData', Array.from(historicalNations.values()));
+            }
+            
             // Send chat history to all players in the joining entity
             if (allianceChats.has(alliance.id)) {
               const joiningEntityId = request.nationId;
@@ -295,6 +388,12 @@ async function startServer() {
         alliance.members = alliance.members.filter((id: string) => id !== entity.id);
         addNews(`${entity.name} has left ${alliance.name}.`, 'alliance_leave');
         
+        const wiki = historicalNations.get(entity.id);
+        if (wiki) {
+          wiki.events.push({ timestamp: Date.now(), type: 'history' as any, description: `Left the alliance "${alliance.name}".` });
+          io.emit('wikiData', Array.from(historicalNations.values()));
+        }
+
         if (alliance.members.length === 0) {
           alliances.delete(allianceId);
           io.emit('allianceDeleted', allianceId);
@@ -370,6 +469,12 @@ async function startServer() {
       unions.set(unionId, newUnion);
       io.emit('unionCreated', newUnion);
       addNews(`The ${newUnion.name} union has been formed!`, 'union_create');
+
+      const wiki = historicalNations.get(player.nationId);
+      if (wiki) {
+        wiki.events.push({ timestamp: Date.now(), type: 'history' as any, description: `Formed the union "${data.name}".` });
+        io.emit('wikiData', Array.from(historicalNations.values()));
+      }
     });
 
     socket.on('updateUnion', (data) => {
@@ -421,6 +526,12 @@ async function startServer() {
             
             const nation = nations.get(request.nationId);
             addNews(`${nation.name} has joined ${union.name}!`, 'union_join');
+
+            const wiki = historicalNations.get(request.nationId);
+            if (wiki) {
+              wiki.events.push({ timestamp: Date.now(), type: 'history' as any, description: `Joined the union "${union.name}".` });
+              io.emit('wikiData', Array.from(historicalNations.values()));
+            }
           }
           allianceRequests.delete(reqId);
         }
@@ -448,6 +559,13 @@ async function startServer() {
         if (nation) {
           addNews(`${nation.name} has left ${union.name}.`, 'union_leave');
         }
+
+        const wiki = historicalNations.get(player.nationId);
+        if (wiki) {
+          wiki.events.push({ timestamp: Date.now(), type: 'history' as any, description: `Left the union "${union.name}".` });
+          io.emit('wikiData', Array.from(historicalNations.values()));
+        }
+
         if (union.members.length === 0) {
           unions.delete(unionId);
           io.emit('unionDeleted', unionId);
@@ -510,6 +628,25 @@ async function startServer() {
       }
     });
 
+    function processWarParticipation(entityId: string, description: string, warId: string) {
+      if (unions.has(entityId)) {
+        const union = unions.get(entityId);
+        union.members.forEach((mId: string) => {
+          const wiki = historicalNations.get(mId);
+          if (wiki) {
+            if (!wiki.events) wiki.events = [];
+            wiki.events.push({ timestamp: Date.now(), type: 'war', description, relatedEntityId: warId });
+          }
+        });
+      } else {
+        const wiki = historicalNations.get(entityId);
+        if (wiki) {
+          if (!wiki.events) wiki.events = [];
+          wiki.events.push({ timestamp: Date.now(), type: 'war', description, relatedEntityId: warId });
+        }
+      }
+    }
+
     // Wars Events
     socket.on('declareWar', (data) => {
       const player = players.get(playerId);
@@ -521,6 +658,22 @@ async function startServer() {
       if (!targetEntity) return;
 
       const warId = Math.random().toString(36).substring(7);
+      const preWarTerritories: Record<string, number[]> = {};
+      const allParticipants = [entity.id, targetEntity.id];
+      // Gather territories for participants
+      for (const pId of allParticipants) {
+        if (unions.has(pId)) {
+          const union = unions.get(pId);
+          union.members.forEach((mId: string) => {
+            const nation = nations.get(mId);
+            if (nation) preWarTerritories[mId] = [...nation.territories];
+          });
+        } else {
+          const nation = nations.get(pId);
+          if (nation) preWarTerritories[pId] = [...nation.territories];
+        }
+      }
+
       const newWar = {
         id: warId,
         attackerId: entity.id,
@@ -530,10 +683,15 @@ async function startServer() {
         attackers: [entity.id],
         defenders: [targetEntity.id],
         battles: [],
-        createdAt: Date.now()
+        timelineEvents: [],
+        createdAt: Date.now(),
+        preWarTerritories
       };
       wars.set(warId, newWar);
       io.emit('warCreated', newWar);
+      processWarParticipation(entity.id, `Participated in the war as an attacker`, warId);
+      processWarParticipation(targetEntity.id, `Attacked and participated in the war as a defender`, warId);
+      io.emit('wikiData', Array.from(historicalNations.values()));
       addNews(`${entity.name} объявил войну ${targetEntity.name}! Причина: ${data.reason}`, 'war_declare');
     });
 
@@ -545,13 +703,26 @@ async function startServer() {
 
       const war = wars.get(data.warId);
       if (war && war.status === 'active') {
+        if (!war.preWarTerritories) war.preWarTerritories = {};
+        if (unions.has(entity.id)) {
+          unions.get(entity.id).members.forEach((mId: string) => {
+            if (!war.preWarTerritories[mId]) war.preWarTerritories[mId] = [...(nations.get(mId)?.territories || [])];
+          });
+        } else {
+          if (!war.preWarTerritories[entity.id]) war.preWarTerritories[entity.id] = [...(nations.get(entity.id)?.territories || [])];
+        }
+
         if (data.side === 'attackers' && !war.attackers.includes(entity.id) && !war.defenders.includes(entity.id)) {
           war.attackers.push(entity.id);
           io.emit('warUpdated', war);
+          processWarParticipation(entity.id, `Joined the war as an attacker`, data.warId);
+          io.emit('wikiData', Array.from(historicalNations.values()));
           addNews(`${entity.name} вступил в войну на стороне атакующих!`, 'war_join');
         } else if (data.side === 'defenders' && !war.attackers.includes(entity.id) && !war.defenders.includes(entity.id)) {
           war.defenders.push(entity.id);
           io.emit('warUpdated', war);
+          processWarParticipation(entity.id, `Joined the war as a defender`, data.warId);
+          io.emit('wikiData', Array.from(historicalNations.values()));
           addNews(`${entity.name} вступил в войну на стороне защитников!`, 'war_join');
         }
       }
@@ -598,6 +769,9 @@ async function startServer() {
             const claims = war.peaceTreaty.territoryClaims;
             const newNations = new Map(nations);
             
+            // Track for wiki
+            const territoryChanges: Record<string, { lostCount: number, to: Set<string> }> = {};
+
             for (const [territoryIdxStr, claimerId] of Object.entries(claims)) {
               const territoryIdx = parseInt(territoryIdxStr);
               // Remove from old owner and clear occupations
@@ -606,6 +780,13 @@ async function startServer() {
                 if (n.territories.includes(territoryIdx)) {
                   n.territories = n.territories.filter((t: number) => t !== territoryIdx);
                   changed = true;
+                  
+                  if (!territoryChanges[nId]) territoryChanges[nId] = { lostCount: 0, to: new Set() };
+                  territoryChanges[nId].lostCount++;
+                  
+                  let actualClaimerId = claimerId as string;
+                  if (unions.has(claimerId)) actualClaimerId = unions.get(claimerId).founderId;
+                  territoryChanges[nId].to.add(actualClaimerId);
                 }
                 if (n.occupations && n.occupations.includes(territoryIdx)) {
                   n.occupations = n.occupations.filter((t: number) => t !== territoryIdx);
@@ -629,12 +810,28 @@ async function startServer() {
               }
             }
             
+            for (const [loserId, data] of Object.entries(territoryChanges)) {
+              const wiki = historicalNations.get(loserId);
+              if (wiki) {
+                if (!wiki.events) wiki.events = [];
+                const toNames = Array.from(data.to).map(id => historicalNations.get(id)?.name).filter(Boolean).join(', ');
+                wiki.events.push({ timestamp: Date.now(), type: 'territory_change', description: `Lost ${data.lostCount} territories to ${toNames}.` });
+                if (!wiki.conquerorIds) wiki.conquerorIds = [];
+                Array.from(data.to).forEach(id => {
+                  if (!wiki.conquerorIds.includes(id)) wiki.conquerorIds.push(id);
+                });
+                io.emit('wikiData', Array.from(historicalNations.values()));
+              }
+            }
+            
             // 2. Apply puppets
             for (const [targetId, claimerId] of Object.entries(war.peaceTreaty.puppetClaims)) {
               let actualClaimerId = claimerId;
               if (unions.has(claimerId)) {
                 actualClaimerId = unions.get(claimerId).founderId;
               }
+              
+              const overlord = newNations.get(actualClaimerId);
               
               // If target is a union, make all its members puppets
               if (unions.has(targetId)) {
@@ -646,6 +843,14 @@ async function startServer() {
                     target.parentId = actualClaimerId;
                     newNations.set(memberId, target);
                     io.emit('nationUpdated', target);
+                    
+                    const wiki = historicalNations.get(memberId);
+                    if (wiki && overlord) {
+                      if (!wiki.events) wiki.events = [];
+                      if (!wiki.conquerorIds) wiki.conquerorIds = [];
+                      wiki.events.push({ timestamp: Date.now(), type: 'conquered', description: `Became a puppet of ${overlord.name}.`, relatedEntityId: actualClaimerId });
+                      if (!wiki.conquerorIds.includes(actualClaimerId)) wiki.conquerorIds.push(actualClaimerId);
+                    }
                   }
                 }
               } else {
@@ -655,6 +860,14 @@ async function startServer() {
                   target.parentId = actualClaimerId;
                   newNations.set(targetId, target);
                   io.emit('nationUpdated', target);
+                  
+                  const wiki = historicalNations.get(targetId);
+                  if (wiki && overlord) {
+                    if (!wiki.events) wiki.events = [];
+                    if (!wiki.conquerorIds) wiki.conquerorIds = [];
+                    wiki.events.push({ timestamp: Date.now(), type: 'conquered', description: `Became a puppet of ${overlord.name}.`, relatedEntityId: actualClaimerId });
+                    if (!wiki.conquerorIds.includes(actualClaimerId)) wiki.conquerorIds.push(actualClaimerId);
+                  }
                 }
               }
             }
@@ -704,6 +917,24 @@ async function startServer() {
           io.emit('warUpdated', war);
           addNews(`${entity.name} отклонил мирный договор. Война продолжается!`, 'war_peace');
         }
+      }
+    });
+
+    socket.on('setWarGenerating', ({ warId, isGenerating }) => {
+      let war = wars.get(warId) || finishedWars.get(warId);
+      if (war) {
+        war.isGeneratingNarrative = isGenerating;
+        io.emit('warUpdated', war);
+      }
+    });
+
+    socket.on('setWarNarrative', ({ warId, narrative, customWiki }) => {
+      let war = wars.get(warId) || finishedWars.get(warId);
+      if (war) {
+        if (narrative !== undefined) war.narrative = narrative;
+        if (customWiki !== undefined) war.customWiki = customWiki;
+        war.isGeneratingNarrative = false;
+        io.emit('warUpdated', war);
       }
     });
 
@@ -832,11 +1063,54 @@ async function startServer() {
                   }
                 }
               }
-              if (changed) successfullyPainted++;
+              if (changed) {
+                successfullyPainted++;
+                if (!battle.paintedPixels) battle.paintedPixels = [];
+                battle.paintedPixels.push(territoryIdx);
+              }
             }
           }
           
           battle.pixelsToPaint -= successfullyPainted;
+
+          // Check if loser is fully occupied. If so, reset remaining pixels.
+          const loserId = battle.winnerId === battle.attackerId ? battle.defenderId : battle.attackerId;
+          const isLoserFullyOccupied = () => {
+             const loserEntity = getDiplomaticEntity(loserId);
+             if (!loserEntity) return false;
+             
+             let allLoserTerritories: number[] = [];
+             if ('members' in loserEntity) {
+               (loserEntity as any).members.forEach((mId: string) => {
+                 const m = newNations.get(mId);
+                 if (m) allLoserTerritories.push(...m.territories);
+               });
+             } else {
+               const n = newNations.get(loserEntity.id);
+               if (n) allLoserTerritories.push(...n.territories);
+             }
+
+             if (allLoserTerritories.length === 0) return true;
+
+             const allOccupied = allLoserTerritories.every(tId => {
+               // Is this territory occupied by anyone in the winning side?
+               // The user said "by another country", let's treat it as occupied by ANY country
+               let isOccupied = false;
+               for (const n of newNations.values()) {
+                 if (n.occupations && n.occupations.includes(tId)) {
+                   isOccupied = true;
+                   break;
+                 }
+               }
+               return isOccupied;
+             });
+             return allOccupied;
+          };
+
+          if (isLoserFullyOccupied()) {
+             battle.pixelsToPaint = 0;
+          }
+
           io.emit('warUpdated', war);
         }
       }
@@ -882,6 +1156,23 @@ async function startServer() {
                 myNation.occupations.push(territoryIdx);
                 newNations.set(player.nationId, myNation);
                 io.emit('nationUpdated', myNation);
+                
+                // Add to timeline
+                const activeWar = myWars[0];
+                if (activeWar) {
+                   if (!activeWar.timelineEvents) activeWar.timelineEvents = [];
+                   let lastEvent = activeWar.timelineEvents[activeWar.timelineEvents.length - 1];
+                   if (lastEvent && lastEvent.type === 'paint' && lastEvent.data.claimerId === entity.id && (Date.now() - lastEvent.time < 5000)) {
+                      lastEvent.data.pixels.push(territoryIdx);
+                   } else {
+                      activeWar.timelineEvents.push({
+                         time: Date.now(),
+                         type: 'paint',
+                         data: { claimerId: entity.id, pixels: [territoryIdx] }
+                      });
+                   }
+                   wars.set(activeWar.id, activeWar);
+                }
               }
             }
           }
@@ -994,6 +1285,8 @@ async function startServer() {
               if (!winnerNation.territories.includes(territoryIdx)) {
                 winnerNation.territories.push(territoryIdx);
                 successfullyPainted++;
+                if (!battle.paintedPixels) battle.paintedPixels = [];
+                battle.paintedPixels.push(territoryIdx);
               }
             }
           }
@@ -1070,10 +1363,87 @@ async function startServer() {
       const nation = nations.get(player.nationId);
       if (!nation) return;
       
-      if (data.name) nation.name = data.name;
+      const wiki = historicalNations.get(player.nationId);
+      
+      let isSignificantChange = false;
+      const oldName = nation.name;
+      const oldFlag = nation.flag;
+      
+      const newName = data.name || nation.name;
+      const newFlag = data.flag !== undefined ? data.flag : nation.flag;
+      
+      // Calculate Levenshtein distance
+      const calcDistance = (a: string, b: string) => {
+         if (a === b) return 0;
+         const matrix = Array(b.length + 1).fill(null).map(() => Array(a.length + 1).fill(null));
+         for (let i = 0; i <= a.length; i++) matrix[0][i] = i;
+         for (let j = 0; j <= b.length; j++) matrix[j][0] = j;
+         for (let j = 1; j <= b.length; j++) {
+            for (let i = 1; i <= a.length; i++) {
+               const indicator = a[i - 1] === b[j - 1] ? 0 : 1;
+               matrix[j][i] = Math.min(
+                  matrix[j][i - 1] + 1,
+                  matrix[j - 1][i] + 1,
+                  matrix[j - 1][i - 1] + indicator
+               );
+            }
+         }
+         return matrix[b.length][a.length];
+      };
+      
+      if (oldName !== newName) {
+        if (calcDistance(oldName, newName) > 4) isSignificantChange = true;
+      }
+      if (oldFlag !== newFlag && newFlag && newFlag.length > 0 && oldFlag && oldFlag.length > 0) {
+        if (oldFlag !== newFlag) isSignificantChange = true;
+      }
+      
+      if (isSignificantChange && wiki) {
+        if (!wiki.symbolismHistory) wiki.symbolismHistory = [];
+        wiki.symbolismHistory.push({
+          name: oldName,
+          flag: oldFlag,
+          timestamp: Date.now()
+        });
+        
+        wiki.events.push({
+            timestamp: Date.now(),
+            type: 'history',
+            description: `${oldName} transformed into ${newName}.`
+        });
+        
+        addNews(`${oldName} is now known as ${newName}.`, 'transformation');
+        
+        // Ensure name and flag are instantly updated in wiki
+        wiki.name = newName;
+        if (newFlag) wiki.flag = newFlag;
+        
+        io.emit('wikiData', Array.from(historicalNations.values()));
+      }
+      
+      if (data.name) {
+        nation.name = data.name;
+        if (wiki && !isSignificantChange) {
+           wiki.name = data.name; // minor update
+           io.emit('wikiData', Array.from(historicalNations.values()));
+        }
+      }
       if (data.shortName) nation.shortName = data.shortName;
-      if (data.ideology) nation.ideology = data.ideology;
-      if (data.flag !== undefined) nation.flag = data.flag;
+      if (data.ideology && data.ideology !== nation.ideology) {
+        nation.ideology = data.ideology;
+        if (wiki) {
+          wiki.ideology = data.ideology;
+          wiki.events.push({ timestamp: Date.now(), type: 'ideology_change', description: `Ideology changed to ${data.ideology}.` });
+          io.emit('wikiData', Array.from(historicalNations.values()));
+        }
+      }
+      if (data.flag !== undefined) {
+        nation.flag = data.flag;
+        if (wiki && !isSignificantChange) {
+          wiki.flag = data.flag; // minor update
+          io.emit('wikiData', Array.from(historicalNations.values()));
+        }
+      }
       if (data.description !== undefined) nation.description = data.description;
       if (data.parties !== undefined) nation.parties = data.parties;
       if (data.color) {
@@ -1090,6 +1460,203 @@ async function startServer() {
       
       nations.set(player.nationId, nation);
       io.emit('nationUpdated', nation);
+    });
+
+    socket.on('updateWikiEventArticle', (data) => {
+      const wiki = historicalNations.get(data.nationId);
+      if (wiki && wiki.events && wiki.events[data.eventIndex]) {
+        wiki.events[data.eventIndex].customArticle = data.article;
+        if (data.customWiki) {
+           wiki.events[data.eventIndex].customWiki = data.customWiki;
+        }
+        io.emit('wikiData', Array.from(historicalNations.values()));
+      }
+    });
+
+    socket.on('addCustomWikiEvent', (data) => {
+      const player = players.get(playerId);
+      if (!player || !player.nationId) return;
+      
+      const realNationId = data.nationId || player.diplomaticEntityId || player.nationId;
+      const wiki = historicalNations.get(realNationId);
+      if (wiki) {
+        wiki.events.push({
+          timestamp: Date.now(),
+          type: 'history',
+          description: data.description,
+          customWiki: data.customWiki
+        });
+        io.emit('wikiData', Array.from(historicalNations.values()));
+      }
+    });
+
+    socket.on('updateWikiDescription', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      
+      const wiki = historicalNations.get(player.nationId);
+      if (wiki) {
+        wiki.customDescription = data.description;
+        io.emit('wikiData', Array.from(historicalNations.values()));
+      }
+    });
+
+    socket.on('createMailChat', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      
+      const id = Math.random().toString(36).substring(7);
+      const parts = Array.from(new Set([player.nationId, ...(data.participants || [])]));
+      const chat = {
+        id,
+        participants: parts,
+        title: data.title || '',
+        messages: [],
+        updatedAt: Date.now(),
+        type: parts.length > 2 ? 'group' : 'private'
+      };
+      mailChats.set(id, chat);
+      
+      chat.participants.forEach((natId: string) => {
+         const p = Array.from(players.values()).find(pl => pl.nationId === natId);
+         if (p) {
+           io.to(p.id).emit('mailChatUpdated', chat);
+         }
+      });
+    });
+
+    socket.on('sendMailMessage', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const chat = mailChats.get(data.chatId);
+      if (!chat || !chat.participants.includes(player.nationId)) return;
+      
+      const nation = nations.get(player.nationId);
+      if (!nation) return;
+
+      if (data.type === 'transfer' && data.amount) {
+        if (!nation.budget || nation.budget < data.amount || data.amount <= 0) return;
+        
+        nation.budget -= data.amount;
+        nations.set(player.nationId, nation);
+        io.emit('nationUpdated', nation);
+        
+        let targets = chat.participants.filter((id: string) => id !== player.nationId);
+        if (data.transferTarget && data.transferTarget !== 'all' && targets.includes(data.transferTarget)) {
+           targets = [data.transferTarget];
+        }
+
+        if (targets.length > 0) {
+          const splitAmount = Math.floor(data.amount / targets.length);
+          targets.forEach((otherId: string) => {
+             const otherNat = nations.get(otherId);
+             if (otherNat) {
+               otherNat.budget = (otherNat.budget || 0) + splitAmount;
+               nations.set(otherId, otherNat);
+               io.emit('nationUpdated', otherNat);
+             }
+          });
+        }
+      }
+
+      const msg = {
+        id: Math.random().toString(36).substring(7),
+        senderId: player.nationId,
+        text: data.text,
+        timestamp: Date.now(),
+        type: data.type || 'text',
+        amount: data.amount,
+        treatySummary: data.treatySummary,
+        transferTarget: data.transferTarget,
+        treatyId: data.treatyId
+      };
+
+      chat.messages.push(msg);
+      chat.updatedAt = Date.now();
+      
+      chat.participants.forEach((natId: string) => {
+         const p = Array.from(players.values()).find(pl => pl.nationId === natId);
+         if (p) {
+           io.to(p.id).emit('mailChatUpdated', chat);
+         }
+      });
+    });
+
+    socket.on('renameMailChat', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const chat = mailChats.get(data.chatId);
+      if (!chat || !chat.participants.includes(player.nationId)) return;
+      if (chat.type !== 'group') return;
+      
+      chat.title = data.title;
+      mailChats.set(chat.id, chat);
+      
+      chat.participants.forEach((natId: string) => {
+         const p = Array.from(players.values()).find(pl => pl.nationId === natId);
+         if (p) {
+           io.to(p.id).emit('mailChatUpdated', chat);
+         }
+      });
+    });
+
+    socket.on('proposeTreaty', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const treaty = {
+        id: Math.random().toString(36).substring(7),
+        title: data.title,
+        content: data.content,
+        authorId: player.nationId,
+        requiredSigners: data.requiredSigners,
+        signatures: [player.nationId],
+        status: 'pending',
+        timestamp: Date.now()
+      };
+      // Auto active if only author signs
+      if (treaty.requiredSigners.every((s: string) => treaty.signatures.includes(s))) {
+         treaty.status = 'active';
+      }
+      treaties.set(treaty.id, treaty);
+      io.emit('treatyUpdated', treaty);
+
+      if (data.chatId) {
+         const chat = mailChats.get(data.chatId);
+         if (chat && chat.participants.includes(player.nationId)) {
+            const msg = {
+              id: Math.random().toString(36).substring(7),
+              senderId: player.nationId,
+              text: data.text || '',
+              timestamp: Date.now(),
+              type: 'treaty',
+              treatyId: treaty.id
+            };
+            chat.messages.push(msg);
+            chat.updatedAt = Date.now();
+            chat.participants.forEach((natId: string) => {
+               const p = Array.from(players.values()).find(pl => pl.nationId === natId);
+               if (p) {
+                 io.to(p.id).emit('mailChatUpdated', chat);
+               }
+            });
+         }
+      }
+    });
+
+    socket.on('signTreaty', (data) => {
+      const player = players.get(playerId);
+      if (!player) return;
+      const treaty = treaties.get(data.treatyId);
+      if (!treaty || treaty.status !== 'pending') return;
+      if (!treaty.requiredSigners.includes(player.nationId)) return;
+      if (!treaty.signatures.includes(player.nationId)) {
+         treaty.signatures.push(player.nationId);
+         if (treaty.requiredSigners.every((s: string) => treaty.signatures.includes(s))) {
+            treaty.status = 'active';
+         }
+         treaties.set(treaty.id, treaty);
+         io.emit('treatyUpdated', treaty);
+      }
     });
 
     socket.on('disbandNation', () => {
@@ -1149,9 +1716,16 @@ async function startServer() {
       nations.delete(player.nationId);
       players.delete(playerId);
       
+      const wiki = historicalNations.get(player.nationId);
+      if (wiki) {
+        wiki.destroyedAt = Date.now();
+        wiki.events.push({ timestamp: Date.now(), type: 'disband', description: `The nation collapsed and disbanded.` });
+      }
+
       io.emit('nationDeleted', player.nationId);
       socket.emit('disbandSuccess');
       addNews(`${nation.name} has collapsed and disbanded.`, 'spawn');
+      io.emit('wikiData', Array.from(historicalNations.values()));
     });
 
     socket.on('disconnect', () => {
@@ -1162,6 +1736,10 @@ async function startServer() {
   // Economy Loop
   setInterval(() => {
     let updated = false;
+    
+    // Step 1: Calculate raw potentials for all nations
+    const rawRates = new Map<string, { rate: number, overheatChange: number }>();
+    
     for (const [id, nation] of nations.entries()) {
       if (!nation.gdp) nation.gdp = 1000;
       if (!nation.overheat) nation.overheat = 0;
@@ -1172,43 +1750,117 @@ async function startServer() {
 
       switch (nation.economyState) {
         case 'Депрессия':
-          baseChange = -0.05;
-          overheatChange = -10;
+          baseChange = -0.12;
+          overheatChange = -20;
           break;
         case 'Рецессия':
-          baseChange = -0.02;
-          overheatChange = -5;
+          baseChange = -0.04;
+          overheatChange = -8;
           break;
         case 'Стагнация':
           baseChange = 0;
-          overheatChange = -2;
+          overheatChange = -1.2;
           break;
         case 'Рост':
           baseChange = 0.02;
-          overheatChange = 5;
+          overheatChange = 0.25;
           break;
         case 'Экономический бум':
           baseChange = 0.05;
-          overheatChange = 10;
+          overheatChange = 0.5;
           break;
       }
 
-      // Add some randomness (-1% to +1%)
-      const randomFactor = (Math.random() * 0.02) - 0.01;
-      const totalChangePercent = baseChange + randomFactor;
-      
-      const changeAmount = Math.floor(nation.gdp * totalChangePercent);
-      nation.gdpChange = changeAmount;
-      nation.gdp = Math.max(100, nation.gdp + changeAmount); // Minimum GDP is 100
-
-      nation.overheat = Math.max(0, Math.min(100, nation.overheat + overheatChange));
-
-      if (nation.overheat >= 100) {
-        nation.economyState = 'Депрессия';
-        nation.overheat = 0;
-        nation.economyLockedUntil = Date.now() + 60000; // Lock for 1 minute
-        addNews(`Экономика ${nation.name} перегрелась и рухнула в депрессию!`, 'economy', nation.id);
+      const overheatValue = nation.overheat || 0;
+      let instability = 0;
+      if (overheatValue > 50) {
+        instability = Math.pow((overheatValue - 50) / 50, 1.5);
       }
+
+      let randomFactor = (Math.random() * 0.01) - 0.005;
+      
+      if (instability > 0) {
+        const swingMin = -0.30 * instability;
+        const swingMax = 0.08 * instability;
+        const wildSwing = (Math.random() * (swingMax - swingMin)) + swingMin;
+        randomFactor += wildSwing;
+      }
+
+      const resistanceThreshold = 100000;
+      let resistanceMultiplier = 1.0;
+      if (nation.gdp > resistanceThreshold) {
+        resistanceMultiplier = Math.max(0.15, 1 / (1 + (nation.gdp - resistanceThreshold) / 400000));
+      }
+
+      let rawChangePercent = baseChange + randomFactor;
+      if (rawChangePercent > 0) {
+        rawChangePercent *= resistanceMultiplier;
+      }
+      
+      rawRates.set(id, { rate: rawChangePercent, overheatChange });
+    }
+
+    // Step 2: Calculate bloc averages
+    const blocAvgs = new Map<string, number>();
+    for (const union of unions.values()) {
+      const rates = union.members.map((mid: string) => rawRates.get(mid)?.rate).filter((r: any) => r !== undefined) as number[];
+      if (rates.length > 1) {
+        blocAvgs.set(`union_${union.id}`, rates.reduce((a, b) => a + b, 0) / rates.length);
+      }
+    }
+    for (const alliance of alliances.values()) {
+      if (alliance.type === 'Economic') {
+        const rates = alliance.members.map((mid: string) => rawRates.get(mid)?.rate).filter((r: any) => r !== undefined) as number[];
+        if (rates.length > 1) {
+          blocAvgs.set(`alliance_${alliance.id}`, rates.reduce((a, b) => a + b, 0) / rates.length);
+        }
+      }
+    }
+
+    // Step 3: Apply adjusted economics and other changes
+    for (const [id, nation] of nations.entries()) {
+      const rawData = rawRates.get(id);
+      if (!rawData) continue;
+      
+      let finalRate = rawData.rate;
+      let sumAvg = 0;
+      let count = 0;
+      
+      // Check unions
+      for (const union of unions.values()) {
+        if (union.members && union.members.includes(id)) {
+          const avg = blocAvgs.get(`union_${union.id}`);
+          if (avg !== undefined) {
+            sumAvg += avg;
+            count++;
+          }
+        }
+      }
+      // Check economic alliances
+      for (const alliance of alliances.values()) {
+        if (alliance.type === 'Economic' && alliance.members && alliance.members.includes(id)) {
+          const avg = blocAvgs.get(`alliance_${alliance.id}`);
+          if (avg !== undefined) {
+            sumAvg += avg;
+            count++;
+          }
+        }
+      }
+      
+      if (count > 0) {
+        const avgRate = sumAvg / count;
+        // 75% tie-in to the group economics (was 40%) - blocs now have a much stronger shared destiny
+        finalRate = finalRate * 0.25 + avgRate * 0.75;
+      }
+      
+      const changeAmount = Math.floor(nation.gdp * finalRate);
+      nation.gdpChange = changeAmount;
+      nation.gdp = Math.max(100, nation.gdp + changeAmount);
+      nation.overheat = Math.max(0, Math.min(100, nation.overheat + rawData.overheatChange));
+
+      const taxRate = 0.10 * Math.max(0.5, 1 / (1 + (nation.gdp / 1000000)));
+      const taxRevenue = Math.floor(nation.gdp * taxRate * 10000);
+      nation.budget = (nation.budget || 0) + taxRevenue;
 
       // Population growth
       const isAtWar = Array.from(wars.values()).some((w: any) => 
@@ -1218,19 +1870,19 @@ async function startServer() {
       if (nation.cities && nation.cities.length > 0) {
         let popGrowthRate = 0;
         if (isAtWar) {
-          popGrowthRate = 0; // No growth at war
+          popGrowthRate = 0;
         } else {
           switch (nation.economyState) {
             case 'Депрессия':
             case 'Рецессия':
-              popGrowthRate = 0.001; // Stagnation
+              popGrowthRate = 0.001;
               break;
             case 'Стагнация':
-              popGrowthRate = 0.005; // Normal slow growth
+              popGrowthRate = 0.005;
               break;
             case 'Рост':
             case 'Экономический бум':
-              popGrowthRate = 0.015; // Fast growth
+              popGrowthRate = 0.015;
               break;
           }
         }
@@ -1246,6 +1898,13 @@ async function startServer() {
 
       nations.set(id, nation);
       updated = true;
+
+      const wiki = historicalNations.get(id);
+      if (wiki) {
+        wiki.lastTerritories = nation.territories;
+        if (nation.gdp > wiki.peakGdp) wiki.peakGdp = nation.gdp;
+        if (nation.territories.length > wiki.peakTerritories) wiki.peakTerritories = nation.territories.length;
+      }
     }
     
     if (updated) {
@@ -1260,8 +1919,10 @@ async function startServer() {
         unSessions: Array.from(unSessions.values()),
         wars: Array.from(wars.values()),
         finishedWars: Array.from(finishedWars.values()),
-        colonizationBattles: Array.from(colonizationBattles.values())
+        colonizationBattles: Array.from(colonizationBattles.values()),
+        treaties: Array.from(treaties.values())
       });
+      io.emit('wikiData', Array.from(historicalNations.values()));
     }
   }, 3000); // Update every 3 seconds
 

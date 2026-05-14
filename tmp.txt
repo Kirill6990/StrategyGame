@@ -1,0 +1,101 @@
+1737:  setInterval(() => {
+1738-    let updated = false;
+1739-    for (const [id, nation] of nations.entries()) {
+1740-      if (!nation.gdp) nation.gdp = 1000;
+1741-      if (!nation.overheat) nation.overheat = 0;
+1742-      if (!nation.economyState) nation.economyState = 'Стагнация';
+1743-
+1744-      let baseChange = 0;
+1745-      let overheatChange = 0;
+1746-
+1747-      switch (nation.economyState) {
+1748-        case 'Депрессия':
+1749-          baseChange = -0.05;
+1750-          overheatChange = -20;
+1751-          break;
+1752-        case 'Рецессия':
+1753-          baseChange = -0.02;
+1754-          overheatChange = -8;
+1755-          break;
+1756-        case 'Стагнация':
+1757-          baseChange = 0;
+1758-          overheatChange = -4;
+1759-          break;
+1760-        case 'Рост':
+1761-          baseChange = 0.02;
+1762-          overheatChange = 5;
+1763-          break;
+1764-        case 'Экономический бум':
+1765-          baseChange = 0.05;
+1766-          overheatChange = 10;
+1767-          break;
+1768-      }
+1769-
+1770-      // Add instability based on overheat
+1771-      const instability = (nation.overheat || 0) / 100;
+1772-      let randomFactor = (Math.random() * 0.02) - 0.01; // Base -1% to +1%
+1773-      
+1774-      if (instability > 0) {
+1775-        // As instability increases, we introduce wildcard swings
+1776-        // At 100% overheat, we get extra -15% to +5% swings
+1777-        const swingMin = -0.15 * instability;
+1778-        const swingMax = 0.05 * instability;
+1779-        const wildSwing = (Math.random() * (swingMax - swingMin)) + swingMin;
+1780-        randomFactor += wildSwing;
+1781-      }
+1782-
+1783-      const totalChangePercent = baseChange + randomFactor;
+1784-      
+1785-      const changeAmount = Math.floor(nation.gdp * totalChangePercent);
+1786-      nation.gdpChange = changeAmount;
+1787-      nation.gdp = Math.max(100, nation.gdp + changeAmount); // Minimum GDP is 100
+1788-
+1789-      if (!nation.gdpHistory) nation.gdpHistory = [];
+1790-      nation.gdpHistory.push({ time: Date.now(), value: nation.gdp });
+1791-      if (nation.gdpHistory.length > 50) nation.gdpHistory.shift();
+1792-
+1793-      nation.overheat = Math.max(0, Math.min(100, nation.overheat + overheatChange));
+1794-
+1795-      // Budget gain
+1796-      nation.budget = (nation.budget || 0) + Math.floor(nation.gdp * 1000);
+1797-
+1798-      if (nation.overheat >= 100) {
+1799-        nation.economyState = 'Депрессия';
+1800-        nation.overheat = 0;
+1801-        nation.economyLockedUntil = Date.now() + 60000; // Lock for 1 minute
+1802-        addNews(`Экономика ${nation.name} перегрелась и рухнула в депрессию!`, 'economy', nation.id);
+1803-      }
+1804-
+1805-      // Population growth
+1806-      const isAtWar = Array.from(wars.values()).some((w: any) => 
+1807-        w.status === 'active' && (w.attackers.includes(id) || w.defenders.includes(id))
+1808-      );
+1809-
+1810-      if (nation.cities && nation.cities.length > 0) {
+1811-        let popGrowthRate = 0;
+1812-        if (isAtWar) {
+1813-          popGrowthRate = 0; // No growth at war
+1814-        } else {
+1815-          switch (nation.economyState) {
+1816-            case 'Депрессия':
+1817-            case 'Рецессия':
+1818-              popGrowthRate = 0.001; // Stagnation
+1819-              break;
+1820-            case 'Стагнация':
+1821-              popGrowthRate = 0.005; // Normal slow growth
+1822-              break;
+1823-            case 'Рост':
+1824-            case 'Экономический бум':
+1825-              popGrowthRate = 0.015; // Fast growth
+1826-              break;
+1827-          }
+1828-        }
+1829-
+1830-        nation.cities = nation.cities.map((city: any) => {
+1831-          if (!city.population) city.population = 1000;
+1832-          return {
+1833-            ...city,
+1834-            population: Math.floor(city.population * (1 + popGrowthRate))
+1835-          };
+1836-        });
+1837-      }

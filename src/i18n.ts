@@ -83,7 +83,33 @@ export const translations = {
     send: 'Send',
     spawnRequest: 'Spawn Request',
     approve: 'Approve',
-    reject: 'Reject'
+    reject: 'Reject',
+    
+    // Wiki
+    wiki: 'World Wiki',
+    welcomeWiki: 'Welcome to the World Wiki',
+    freeEncyclopedia: 'The free encyclopedia that anyone can read.',
+    allHistoricalNations: 'All Nations',
+    active: 'Active',
+    historical: 'Historical',
+    defunct: 'Defunct',
+    backToMain: 'Back to Main Page',
+    peakGdp: 'Peak GDP',
+    peakTerritories: 'Peak Territories',
+    originalIdeology: 'Original Ideology',
+    conqueredBy: 'Conquered by:',
+    successorStates: 'Successor states:',
+    history: 'History',
+    editArticle: 'Edit Article',
+    saveArticle: 'Save Article',
+    cancelEdit: 'Cancel',
+    customDescriptionPlaceholder: 'Write the history of your nation here...',
+    territoryMap: 'Territory Map',
+    wikiDefaultDesc1: ' is a nation with a peak GDP of ',
+    wikiDefaultDesc2: '. It was established on ',
+    wikiDefaultDesc3: ' and collapsed on ',
+    wikiDefaultDesc4: ' and is currently active.',
+    predecessorState: 'Predecessor:'
   },
   ru: {
     settings: 'Настройки',
@@ -164,7 +190,33 @@ export const translations = {
     send: 'Отправить',
     spawnRequest: 'Запрос на создание',
     approve: 'Одобрить',
-    reject: 'Отклонить'
+    reject: 'Отклонить',
+    
+    // Wiki
+    wiki: 'Мировая Вики',
+    welcomeWiki: 'Добро пожаловать в Мировую Вики',
+    freeEncyclopedia: 'Свободная энциклопедия, которую может читать каждый.',
+    allHistoricalNations: 'Все государства',
+    active: 'Активно',
+    historical: 'Историческое',
+    defunct: 'Упразднено',
+    backToMain: 'Назад на главную',
+    peakGdp: 'Пик ВВП',
+    peakTerritories: 'Макс. Территорий',
+    originalIdeology: 'Оригинальная Идеология',
+    conqueredBy: 'Завоёвано:',
+    successorStates: 'Государства-преемники:',
+    history: 'История',
+    editArticle: 'Редактировать статью',
+    saveArticle: 'Сохранить статью',
+    cancelEdit: 'Отмена',
+    customDescriptionPlaceholder: 'Напишите историю вашего государства здесь...',
+    territoryMap: 'Карта территорий',
+    wikiDefaultDesc1: ' — государство с пиком ВВП в ',
+    wikiDefaultDesc2: '. Оно было основано ',
+    wikiDefaultDesc3: ' и распалось ',
+    wikiDefaultDesc4: ' и активно по сей день.',
+    predecessorState: 'Предшественник:'
   }
 };
 

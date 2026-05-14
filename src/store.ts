@@ -9,6 +9,38 @@ interface ChatMessage {
   timestamp: number;
 }
 
+export interface Treaty {
+  id: string;
+  title: string;
+  content: string;
+  authorId: string;
+  requiredSigners: string[];
+  signatures: string[];
+  status: 'pending' | 'active' | 'rejected';
+  timestamp: number;
+}
+
+export interface MailMessage {
+  id: string;
+  senderId: string;
+  text: string;
+  timestamp: number;
+  type: 'text' | 'transfer' | 'treaty';
+  amount?: number;
+  treatySummary?: string;
+  transferTarget?: string;
+  treatyId?: string;
+}
+
+export interface MailChat {
+  id: string;
+  title: string;
+  participants: string[];
+  messages: MailMessage[];
+  updatedAt: number;
+  type: 'private' | 'group';
+}
+
 export interface City {
   id: string;
   name: string;
@@ -41,9 +73,11 @@ export interface Nation {
   cities?: City[];
   economyState?: string;
   gdp?: number;
+  budget?: number;
   overheat?: number;
   economyLockedUntil?: number;
   gdpChange?: number;
+  gdpHistory?: { time: number; value: number }[];
   parties?: PoliticalParty[];
 }
 
@@ -113,6 +147,7 @@ export interface Battle {
   status: 'pending' | 'rolling' | 'finished';
   winnerId?: string;
   pixelsToPaint?: number;
+  paintedPixels?: number[];
   resultText?: string;
   readyPlayers?: string[];
 }
@@ -136,6 +171,55 @@ export interface War {
   peaceTreaty?: PeaceTreaty;
   createdAt: number;
   finishedAt?: number;
+  preWarTerritories?: Record<string, number[]>;
+  timelineEvents?: { time: number; type: 'paint' | 'battle' | 'treaty'; data: any }[];
+  narrative?: string;
+  isGeneratingNarrative?: boolean;
+  customWiki?: {
+    title?: string;
+    intro?: string;
+    narrative?: string;
+    result?: string;
+    casualties?: string;
+  };
+}
+
+export interface WikiEvent {
+  timestamp: number;
+  type: 'creation' | 'ideology_change' | 'territory_change' | 'war' | 'disband' | 'collapse' | 'conquered' | 'successor' | 'history' | 'other';
+  description: string;
+  relatedEntityId?: string;
+  customArticle?: string;
+  customWiki?: {
+    title?: string;
+    text?: string;
+    infobox?: Record<string, string>;
+    image?: string;
+  };
+}
+
+export interface WikiNation {
+  id: string;
+  name: string;
+  color: string;
+  flag: string | null;
+  ideology: string;
+  status: string;
+  createdAt: number;
+  destroyedAt: number | null;
+  peakGdp: number;
+  peakTerritories: number;
+  lastTerritories?: number[];
+  customDescription?: string;
+  events: WikiEvent[];
+  conquerorIds: string[];
+  successors: string[];
+  predecessorId?: string;
+  symbolismHistory?: {
+    name: string;
+    flag: string | null;
+    timestamp: number;
+  }[];
 }
 
 interface GameState {
@@ -151,6 +235,9 @@ interface GameState {
   wars: War[];
   finishedWars: War[];
   colonizationBattles: Battle[];
+  mailChats: MailChat[];
+  treaties: Treaty[];
+  wikiNations: WikiNation[];
   myNation: Nation | null;
   pendingRequests: SpawnRequest[];
   spawnStatus: 'idle' | 'pending' | 'success' | 'rejected' | 'error';
@@ -199,6 +286,14 @@ interface GameState {
   createCity: (name: string, territoryIdx: number) => void;
   renameCity: (cityId: string, newName: string) => void;
   updateEconomyState: (state: string) => void;
+  createMailChat: (participants: string[], title?: string) => void;
+  sendMailMessage: (chatId: string, text: string, type: 'text' | 'transfer' | 'treaty', amount?: number, treatySummary?: string, transferTarget?: string, treatyId?: string) => void;
+  renameMailChat: (chatId: string, title: string) => void;
+  proposeTreaty: (title: string, content: string, requiredSigners: string[], chatId?: string, text?: string) => void;
+  signTreaty: (treatyId: string) => void;
+  updateWikiDescription: (description: string) => void;
+  updateWikiEventArticle: (nationId: string, eventIndex: number, article: string, customWiki?: any) => void;
+  addCustomWikiEvent: (nationId: string, description: string, customWiki?: any) => void;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -214,6 +309,9 @@ export const useGameStore = create<GameState>((set, get) => ({
   wars: [],
   finishedWars: [],
   colonizationBattles: [],
+  mailChats: [],
+  treaties: [],
+  wikiNations: [],
   myNation: null,
   pendingRequests: [],
   spawnStatus: 'idle',
@@ -246,9 +344,28 @@ export const useGameStore = create<GameState>((set, get) => ({
     
     newSocket.on('connect', () => set({ connected: true }));
     newSocket.on('disconnect', () => set({ connected: false }));
-    newSocket.on('gameState', (data: { nations: Nation[], chatHistory?: ChatMessage[], alliances?: Alliance[], unions?: Union[], newsHistory?: NewsItem[], allianceRequests?: AllianceRequest[], allianceChats?: Record<string, ChatMessage[]>, unSessions?: UNSession[], wars?: War[], finishedWars?: War[], colonizationBattles?: Battle[] }) => {
+    newSocket.on('gameState', (data: { nations: Nation[], chatHistory?: ChatMessage[], alliances?: Alliance[], unions?: Union[], newsHistory?: NewsItem[], allianceRequests?: AllianceRequest[], allianceChats?: Record<string, ChatMessage[]>, unSessions?: UNSession[], wars?: War[], finishedWars?: War[], colonizationBattles?: Battle[], treaties?: Treaty[] }) => {
+      const now = Date.now();
+      const prevNations = get().nations;
+      const prevNationsMap = new Map(prevNations.map(n => [n.id, n]));
+      
+      const updatedNations = data.nations.map(n => {
+        const prevNation = prevNationsMap.get(n.id);
+        let history = prevNation?.gdpHistory ? prevNation.gdpHistory : [];
+        
+        // Only update history if enough time has passed (approx 3s)
+        const lastEntry = history[history.length - 1];
+        if (!lastEntry || now - lastEntry.time >= 2800) {
+          const newHistory = [...history, { time: now, value: n.gdp || 0 }];
+          if (newHistory.length > 50) newHistory.shift();
+          return { ...n, gdpHistory: newHistory };
+        }
+        
+        return { ...n, gdpHistory: history };
+      });
+
       set({ 
-        nations: data.nations, 
+        nations: updatedNations, 
         chatMessages: data.chatHistory || [],
         alliances: data.alliances || [],
         unions: data.unions || [],
@@ -258,17 +375,25 @@ export const useGameStore = create<GameState>((set, get) => ({
         unSessions: data.unSessions || [],
         wars: data.wars || [],
         finishedWars: data.finishedWars || [],
-        colonizationBattles: data.colonizationBattles || []
+        colonizationBattles: data.colonizationBattles || [],
+        mailChats: (data as any).hasOwnProperty('mailChats') ? (data as any).mailChats : get().mailChats,
+        treaties: (data as any).hasOwnProperty('treaties') ? (data as any).treaties : get().treaties,
+        wikiNations: (data as any).hasOwnProperty('wikiNations') ? (data as any).wikiNations : get().wikiNations
       });
-      const myNat = data.nations.find(n => n.ownerId === playerId);
+      const myNat = updatedNations.find(n => n.ownerId === playerId);
       if (myNat) set({ myNation: myNat });
     });
+    newSocket.on('wikiData', (wikiNations: WikiNation[]) => set({ wikiNations }));
     newSocket.on('chatMessage', (msg: ChatMessage) => set((state) => ({ chatMessages: [...state.chatMessages, msg] })));
-    newSocket.on('nationCreated', (nation: Nation) => set((state) => ({ nations: [...state.nations, nation] })));
-    newSocket.on('nationUpdated', (nation: Nation) => set((state) => ({
-      nations: state.nations.map(n => n.id === nation.id ? nation : n),
-      myNation: state.myNation?.id === nation.id ? nation : state.myNation
-    })));
+    newSocket.on('nationCreated', (nation: Nation) => set((state) => ({ nations: [...state.nations, { ...nation, gdpHistory: [] }] })));
+    newSocket.on('nationUpdated', (nation: Nation) => set((state) => {
+      const prevNation = state.nations.find(n => n.id === nation.id);
+      const updatedNation = { ...nation, gdpHistory: prevNation?.gdpHistory || [] };
+      return {
+        nations: state.nations.map(n => n.id === nation.id ? updatedNation : n),
+        myNation: state.myNation?.id === nation.id ? updatedNation : state.myNation
+      };
+    }));
     newSocket.on('nationDeleted', (nationId: string) => set((state) => ({
       nations: state.nations.filter(n => n.id !== nationId)
     })));
@@ -332,6 +457,22 @@ export const useGameStore = create<GameState>((set, get) => ({
     newSocket.on('colonizationBattleFinished', (battle: Battle) => set(state => ({
       colonizationBattles: state.colonizationBattles.filter(b => b.id !== battle.id)
     })));
+
+    newSocket.on('mailChatUpdated', (chat: MailChat) => set(state => {
+      const exists = state.mailChats.some(c => c.id === chat.id);
+      if (exists) {
+        return { mailChats: state.mailChats.map(c => c.id === chat.id ? chat : c).sort((a,b) => b.updatedAt - a.updatedAt) };
+      }
+      return { mailChats: [chat, ...state.mailChats].sort((a,b) => b.updatedAt - a.updatedAt) };
+    }));
+
+    newSocket.on('treatyUpdated', (treaty: Treaty) => set(state => {
+      const exists = state.treaties.some(t => t.id === treaty.id);
+      if (exists) {
+        return { treaties: state.treaties.map(t => t.id === treaty.id ? treaty : t) };
+      }
+      return { treaties: [...state.treaties, treaty] };
+    }));
 
     newSocket.on('spawnRequest', (request: SpawnRequest) => set((state) => ({ pendingRequests: [...state.pendingRequests, request] })));
     newSocket.on('spawnPending', (data: { message: string }) => set({ spawnStatus: 'pending', spawnMessage: data.message }));
@@ -549,8 +690,48 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (socket) socket.emit('updateEconomyState', { state });
   },
 
+  createMailChat: (participants, title) => {
+    const { socket } = get();
+    if (socket) socket.emit('createMailChat', { participants, title });
+  },
+
+  sendMailMessage: (chatId, text, type, amount, treatySummary, transferTarget, treatyId) => {
+    const { socket } = get();
+    if (socket) socket.emit('sendMailMessage', { chatId, text, type, amount, treatySummary, transferTarget, treatyId });
+  },
+
+  renameMailChat: (chatId, title) => {
+    const { socket } = get();
+    if (socket) socket.emit('renameMailChat', { chatId, title });
+  },
+
+  proposeTreaty: (title, content, requiredSigners, chatId, text) => {
+    const { socket } = get();
+    if (socket) socket.emit('proposeTreaty', { title, content, requiredSigners, chatId, text });
+  },
+
+  signTreaty: (treatyId) => {
+    const { socket } = get();
+    if (socket) socket.emit('signTreaty', { treatyId });
+  },
+
   disbandNation: () => {
     const { socket } = get();
     if (socket) socket.emit('disbandNation');
+  },
+
+  updateWikiDescription: (description) => {
+    const { socket } = get();
+    if (socket) socket.emit('updateWikiDescription', { description });
+  },
+
+  updateWikiEventArticle: (nationId, eventIndex, article, customWiki) => {
+    const { socket } = get();
+    if (socket) socket.emit('updateWikiEventArticle', { nationId, eventIndex, article, customWiki });
+  },
+
+  addCustomWikiEvent: (nationId, description, customWiki) => {
+    const { socket } = get();
+    if (socket) socket.emit('addCustomWikiEvent', { nationId, description, customWiki });
   }
 }));
