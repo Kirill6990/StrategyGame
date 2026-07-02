@@ -80,7 +80,7 @@ import { GoogleGenAI } from '@google/genai';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-function generateWarNarrativeClientSide(war: any, getNatName: (id: string) => string, lang: string, socket: any, customPrompt?: string, existingWikiStr?: string, newsContextStr?: string) {
+function generateWarNarrativeClientSide(war: any, getNatName: (id: string) => string, lang: string, socket: any, customPrompt?: string, existingWikiStr?: string, newsContextStr?: string, nationsListCtx?: string) {
   if (war.isGeneratingNarrative || (!customPrompt && war.customWiki)) return;
   socket.emit('setWarGenerating', { warId: war.id, isGenerating: true });
   
@@ -100,6 +100,8 @@ function generateWarNarrativeClientSide(war: any, getNatName: (id: string) => st
   let prompt = '';
   const newsInfo = newsContextStr ? `\nКонтекст из мировых новостей:\n${newsContextStr}` : '';
   const newsInfoEn = newsContextStr ? `\nWorld News Context:\n${newsContextStr}` : '';
+  const nationsInfo = nationsListCtx ? `\nИзвестные государства в мире: ${nationsListCtx}` : '';
+  const nationsInfoEn = nationsListCtx ? `\nKnown nations in the world: ${nationsListCtx}` : '';
   
   if (customPrompt) {
      prompt = isRu ? 
@@ -116,7 +118,9 @@ function generateWarNarrativeClientSide(war: any, getNatName: (id: string) => st
       ${peaceSummary}
       ${newsInfo}
 
-      Обнови нужные поля и верни ГОТОВЫЙ JSON. Поддерживается Markdown (например, ссылки на страны [Имя](nation:id), войны [Имя](war:id)).`
+      Важно: ты МОЖЕШЬ вставлять ссылки на другие государства из известного списка. Для этого оберни название в квадратные скобки: [[Название]]. Делай это и в тексте, и в инфобоксе. ${nationsInfo}
+
+      Обнови нужные поля и верни ГОТОВЫЙ JSON. Поддерживается Markdown (например, ссылки на страны [[Имя]], войны [Имя](war:id)).`
     :
       `You are editing the ENTIRE war article (Wiki page).
       IMPORTANT: Ignore real historical events and countries. Rely only on the events happening in this game (listed below).
@@ -131,7 +135,9 @@ function generateWarNarrativeClientSide(war: any, getNatName: (id: string) => st
       ${peaceSummary}
       ${newsInfoEn}
 
-      Update the fields and return the final JSON. Markdown supported (e.g., links [Name](nation:id), [Name](war:id)).`;
+      Important: you CAN insert links to other nations from the known list. Wrap the nation name in double square brackets: [[Name]]. Do this in both text and infobox values. ${nationsInfoEn}
+
+      Update the fields and return the final JSON. Markdown supported (e.g., links [[Name]], [Name](war:id)).`;
   } else {
     prompt = isRu ? 
       `Сгенерируй полноценную Вики-статью о войне.
@@ -144,8 +150,10 @@ function generateWarNarrativeClientSide(war: any, getNatName: (id: string) => st
       ${peaceSummary}
       ${newsInfo}
       
+      Важно: ты МОЖЕШЬ вставлять ссылки на другие государства из известного списка. Для этого оберни название в квадратные скобки: [[Название]]. Делай это и в тексте, и в инфобоксе (в значениях полей). ${nationsInfo}
+      
       Придумай эпичное название для войны (если подходит).
-      Верни JSON. Поддерживается Markdown (например, ссылки на страны [Имя](nation:id), войны [Имя](war:id)).`
+      Верни JSON. Поддерживается Markdown (например, ссылки на страны [[Имя]], войны [Имя](war:id)).`
     :
       `Generate a full Wiki article about the war.
       IMPORTANT: Ignore all real historical events and countries. Only rely on events happening in the game.
@@ -156,8 +164,10 @@ function generateWarNarrativeClientSide(war: any, getNatName: (id: string) => st
       ${peaceSummary}
       ${newsInfoEn}
 
+      Important: you CAN insert links to other nations from the known list. Wrap the nation name in double square brackets: [[Name]]. Do this in both text and infobox values. ${nationsInfoEn}
+
       Invent an epic name for the war (if fitting).
-      Return JSON. Markdown supported (e.g., links [Name](nation:id), [Name](war:id)).`;
+      Return JSON. Markdown supported (e.g., links [[Name]], [Name](war:id)).`;
   }
 
   ai.models.generateContent({
@@ -228,6 +238,157 @@ function generateWarNarrative(war: any, getNatName: (id: string) => string, lang
 
   return textRules.join(' ');
 }
+
+const CustomColorsMap = ({ mapColors, wikiNations, nations, lang, bgImage, gridSize }: { mapColors: Record<string, string>, wikiNations: any[], nations: any[], lang: string, bgImage: any, gridSize: any }) => {
+  return (
+    <div className="border-b border-[#a2a9b1] flex flex-col items-center bg-gray-50 p-2">
+       <div className="w-full bg-[#1a202c] relative border border-[#a2a9b1] shadow-sm overflow-hidden aspect-[2]">
+         <canvas 
+            className="w-full h-full object-contain"
+            ref={canvas => {
+              if (!canvas || !wikiNations) return;
+              
+              const w = gridSize?.w || 1000;
+              const h = gridSize?.h || 500;
+              let minX = w, minY = h, maxX = 0, maxY = 0;
+              let hasPoints = false;
+              
+              const getTerritories = (nid: string) => {
+                const active = nations.find(n => n.id === nid);
+                if (active && active.territories && active.territories.length > 0) return active.territories;
+                const wiki = wikiNations.find(wi => wi.id === nid);
+                if (wiki && wiki.lastTerritories && wiki.lastTerritories.length > 0) return wiki.lastTerritories;
+                return [];
+              };
+
+              const computeBounds = (nid: string) => {
+                const terrs = getTerritories(nid);
+                terrs.forEach((idx: number) => {
+                   const gx = idx % w;
+                   const gy = Math.floor(idx / w);
+                   if (gx < minX) minX = gx;
+                   if (gx > maxX) maxX = gx;
+                   if (gy < minY) minY = gy;
+                   if (gy > maxY) maxY = gy;
+                   hasPoints = true;
+                });
+              };
+              
+              const identifiedNationIds: string[] = [];
+              const colorsMap = new Map<string, string>();
+              
+              Object.entries(mapColors).forEach(([name, color]) => {
+                const n = wikiNations.find(w => w.name.toLowerCase() === name.toLowerCase()) || nations.find(n => n.name.toLowerCase() === name.toLowerCase());
+                if (n) {
+                  identifiedNationIds.push(n.id);
+                  colorsMap.set(n.id, color);
+                  computeBounds(n.id);
+                }
+              });
+
+              if (!hasPoints) {
+                minX = 0; maxX = w; minY = 0; maxY = h;
+              }
+              if (maxX < minX) {
+                minX = 0; maxX = w; minY = 0; maxY = h;
+              }
+
+              const padding = 8;
+              minX = Math.max(0, minX - padding);
+              minY = Math.max(0, minY - padding);
+              maxX = Math.min(w, maxX + padding);
+              maxY = Math.min(h, maxY + padding);
+
+              let boxW = maxX - minX || 1;
+              let boxH = maxY - minY || 1;
+              
+              const targetAspect = 2;
+              const currentAspect = boxW / boxH;
+              
+              if (currentAspect < targetAspect) {
+                const newW = boxH * targetAspect;
+                const diff = newW - boxW;
+                let p1 = diff / 2;
+                let p2 = diff / 2;
+                if (minX - p1 < 0) { p2 += p1 - minX; p1 = minX; }
+                if (maxX + p2 > w) { p1 += (maxX + p2) - w; p2 = w - maxX; }
+                minX = Math.max(0, Math.floor(minX - p1));
+                maxX = Math.min(w, Math.ceil(maxX + p2));
+              } else if (currentAspect > targetAspect) {
+                const newH = boxW / targetAspect;
+                const diff = newH - boxH;
+                let p1 = diff / 2;
+                let p2 = diff / 2;
+                if (minY - p1 < 0) { p2 += p1 - minY; p1 = minY; }
+                if (maxY + p2 > h) { p1 += (maxY + p2) - h; p2 = h - maxY; }
+                minY = Math.max(0, Math.floor(minY - p1));
+                maxY = Math.min(h, Math.ceil(maxY + p2));
+              }
+              
+              boxW = maxX - minX || 1;
+              boxH = maxY - minY || 1;
+
+              const renderScale = Math.min(10, Math.floor(2000 / Math.max(boxW, boxH)));
+              const finalScale = Math.max(2, renderScale);
+
+              canvas.width = boxW * finalScale;
+              canvas.height = boxH * finalScale;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) return;
+              
+              ctx.scale(finalScale, finalScale);
+              ctx.imageSmoothingEnabled = false;
+              ctx.clearRect(0, 0, boxW, boxH);
+              
+              if (bgImage) {
+                try {
+                  const imgW = (bgImage as HTMLImageElement).naturalWidth || w;
+                  const imgH = (bgImage as HTMLImageElement).naturalHeight || h;
+                  const rx = imgW / w;
+                  const ry = imgH / h;
+                  ctx.drawImage(bgImage, minX * rx, minY * ry, boxW * rx, boxH * ry, 0, 0, boxW, boxH);
+                } catch(e) {
+                  // handle
+                }
+              } else {
+                ctx.fillStyle = '#1e293b'; 
+                ctx.fillRect(0, 0, boxW, boxH);
+                ctx.fillStyle = '#334155';
+                const startX = Math.floor(minX / 10) * 10;
+                const startY = Math.floor(minY / 10) * 10;
+                for (let y = startY; y <= maxY; y += 10) {
+                  for (let x = startX; x <= maxX; x += 10) {
+                    ctx.fillRect(x - minX, y - minY, 1, 1);
+                  }
+                }
+              }
+
+              const paintNation = (nid: string, color: string) => {
+                ctx.fillStyle = color;
+                const terrs = getTerritories(nid);
+                terrs.forEach((idx: number) => {
+                   const gx = idx % w;
+                   const gy = Math.floor(idx / w);
+                   ctx.fillRect(gx - minX, gy - minY, 1, 1);
+                });
+              };
+              
+              wikiNations.forEach(n => {
+                 if (!identifiedNationIds.includes(n.id)) {
+                    if (!bgImage) paintNation(n.id, '#475569');
+                 }
+              });
+
+              identifiedNationIds.forEach((id: string) => {
+                 const c = colorsMap.get(id);
+                 if (c) paintNation(id, c);
+              });
+            }} 
+         />
+       </div>
+    </div>
+  );
+};
 
 const WarStaticMap = ({ war, wikiNations, nations, lang, bgImage, gridSize }: { war: any, wikiNations: any[], nations: any[], lang: string, bgImage: any, gridSize: any }) => {
   return (
@@ -805,7 +966,6 @@ function useImageModeration(url: string | undefined, language: string) {
         const data = await res.json();
         
         if (data.error) {
-           console.error('Image fetch error:', data.error);
            if (active) setIsCheckingImage(false);
            return;
         }
@@ -852,6 +1012,295 @@ function useImageModeration(url: string | undefined, language: string) {
   return { isCheckingImage, moderationError };
 }
 
+export function processWikiLinks(text: string) {
+  if (!text) return text;
+  return text.replace(/\[\[(.*?)\]\]/g, (match, p1) => {
+    const parts = p1.split('|');
+    const target = parts[0].trim();
+    const label = parts.length > 1 ? parts[1].trim() : target;
+    return `[${label}](wiki:${encodeURIComponent(target)})`;
+  });
+}
+
+function buildMarkdownComponents(
+  language: string, 
+  setSelectedWikiNationId: any, 
+  setSelectedWikiWarId: any, 
+  setViewingEventArticle: any, 
+  setWikiTab: any,
+  contextNationId?: string | null,
+  setEventArticleDraft?: any,
+  isOwner?: boolean,
+  isInfobox?: boolean
+) {
+  return {
+    h1: ({node, ...props}: any) => <h1 className={isInfobox ? "text-lg font-bold" : "text-3xl font-serif mt-6 mb-3 text-black border-b border-[#a2a9b1] pb-2"} {...props} />,
+    h2: ({node, ...props}: any) => <h2 className={isInfobox ? "text-base font-bold" : "text-2xl font-serif mt-6 mb-3 text-black border-b border-[#a2a9b1] pb-2"} {...props} />,
+    h3: ({node, ...props}: any) => <h3 className={isInfobox ? "text-sm font-bold" : "text-xl font-serif mt-4 mb-2 text-black border-b border-[#a2a9b1] pb-1"} {...props} />,
+    p: ({node, ...props}: any) => isInfobox ? <span {...props} /> : <p className="mb-4 text-base leading-relaxed" {...props} />,
+    ul: ({node, ...props}: any) => <ul className={isInfobox ? "list-disc pl-4 space-y-0.5" : "list-disc pl-6 mb-4 space-y-1"} {...props} />,
+    ol: ({node, ...props}: any) => <ol className={isInfobox ? "list-decimal pl-4 space-y-0.5" : "list-decimal pl-6 mb-4 space-y-1"} {...props} />,
+    strong: ({node, ...props}: any) => <strong className="font-bold text-black" {...props} />,
+    a: ({node, href, children, ...props}: any) => {
+      if (href?.startsWith('nation:')) {
+        return <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); setViewingEventArticle(null); setSelectedWikiNationId(href.split(':')[1]); }} className="text-[#0645ad] hover:underline cursor-pointer" {...props}>{children}</span>
+      }
+      if (href?.startsWith('war:')) {
+        return <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); setViewingEventArticle(null); setSelectedWikiNationId(null); setSelectedWikiWarId(href.split(':')[1]); setWikiTab('wars'); }} className="text-[#0645ad] hover:underline cursor-pointer" {...props}>{children}</span>
+      }
+      if (href?.startsWith('event:')) {
+        const parts = href.split(':');
+        // format: event:nationId:eventIndex
+        if (parts.length === 3) {
+           return <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); setViewingEventArticle({ nationId: parts[1], eventIndex: parseInt(parts[2]) }); setWikiTab('nations'); setSelectedWikiNationId(parts[1]); }} className="text-[#0645ad] hover:underline cursor-pointer" {...props}>{children}</span>
+        }
+      }
+      if (href?.startsWith('wiki:')) {
+        const targetName = decodeURIComponent(href.substring(5)).toLowerCase().trim();
+        const state = useGameStore.getState();
+        const allWikiNations = state.wikiNations || [];
+        const allWars = [...(state.wars || []), ...(Array.from(state.finishedWars || []))];
+        
+        const foundNationForFlag = allWikiNations.find(n => n.name.toLowerCase() === targetName);
+        
+        return <span onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            let found = false;
+            // 1. Search Nations
+            const foundNation = allWikiNations.find(n => n.name.toLowerCase() === targetName);
+            if (foundNation) {
+                setViewingEventArticle(null);
+                setSelectedWikiNationId(foundNation.id);
+                setWikiTab('nations');
+                found = true;
+            }
+            
+            // 2. Search Wars
+            if (!found) {
+               const foundWar = allWars.find(w => w.customWiki?.title?.toLowerCase() === targetName || `war ${w.id}`.toLowerCase() === targetName || `война ${w.id}`.toLowerCase() === targetName);
+               if (foundWar) {
+                   setViewingEventArticle(null);
+                   setSelectedWikiNationId(null);
+                   setSelectedWikiWarId(foundWar.id);
+                   setWikiTab('wars');
+                   found = true;
+               }
+            }
+            
+            // 3. Search Events
+            if (!found) {
+               for (const n of allWikiNations) {
+                   if (n.events) {
+                       const eventIdx = n.events.findIndex((e: any) => e.customWiki?.title?.toLowerCase() === targetName || e.customArticle?.title?.toLowerCase() === targetName);
+                       if (eventIdx !== -1) {
+                           setViewingEventArticle({ nationId: n.id, eventIndex: eventIdx });
+                           setSelectedWikiNationId(n.id);
+                           setWikiTab('nations');
+                           found = true;
+                           break;
+                       }
+                   }
+               }
+            }
+            
+            // 4. Search World Events
+            if (!found) {
+               const foundWorldEvent = (state.worldEvents || []).find(e => e.customWiki?.title?.toLowerCase() === targetName || e.name.toLowerCase() === targetName);
+               if (foundWorldEvent) {
+                   setViewingEventArticle(null);
+                   setSelectedWikiNationId(null);
+                   setSelectedWikiWarId(null);
+                   window.dispatchEvent(new CustomEvent('viewWorldEvent', { detail: foundWorldEvent }));
+                   setWikiTab('events');
+                   found = true;
+               }
+            }
+            
+            if (!found) {
+                if (contextNationId && setEventArticleDraft && isOwner) {
+                     setEventArticleDraft({
+                         title: decodeURIComponent(href.substring(5)).trim(),
+                         text: '',
+                         description: language === 'ru' ? 'Новая статья' : 'New Article',
+                         image: '',
+                         infoboxKeys: [],
+                         infoboxValues: []
+                     });
+                     setViewingEventArticle({ nationId: contextNationId, isNew: true, isEditing: true });
+                } else {
+                     window.dispatchEvent(new CustomEvent('showToast', { detail: language === 'ru' ? 'Статья не найдена' : 'Article not found' }));
+                }
+            }
+        }} className="text-[#0645ad] hover:underline cursor-pointer inline-flex items-center gap-1 align-bottom" {...props}>
+          {foundNationForFlag?.flag && <img src={foundNationForFlag.flag} alt="" className="w-[18px] h-[12px] object-cover border border-gray-300 shadow-sm" />}
+          <span>{children}</span>
+        </span>
+      }
+      return <a href={href} onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.open(href, '_blank'); }} className="text-[#0645ad] hover:underline" {...props}>{children}</a>
+    }
+  };
+}
+
+function WikiNavbox({ wiki, isOwner, language, setViewingEventArticle, buildMarkdownComps }: any) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState<any>(null);
+
+  if (!wiki.navbox && !isOwner) return null;
+
+  const initDraft = () => {
+    if (wiki.navbox) {
+      setDraft(JSON.parse(JSON.stringify(wiki.navbox)));
+    } else {
+      setDraft({
+        title: wiki.name + (language === 'ru' ? ' в темах' : ' in topics'),
+        groups: []
+      });
+    }
+  };
+
+  const handleSave = () => {
+    useGameStore.getState().updateWikiNavbox(wiki.id, draft);
+    setIsEditing(false);
+  };
+
+  if (isEditing) {
+    return (
+      <div className="w-full bg-[#f8f9fa] border border-[#a2a9b1] p-4 text-sm font-sans mt-4">
+        <div className="flex items-center justify-between border-b border-[#a2a9b1] pb-2 mb-4">
+          <h3 className="font-bold text-lg">{language === 'ru' ? 'Редактировать Навигационный Шаблон' : 'Edit Navigation Box'}</h3>
+          <div className="flex gap-2">
+            <button onClick={() => setIsEditing(false)} className="px-3 py-1 border border-[#a2a9b1] hover:bg-[#eaecf0]">{language === 'ru' ? 'Отмена' : 'Cancel'}</button>
+            <button onClick={handleSave} className="px-3 py-1 bg-[#3366cc] text-white hover:bg-[#2a4b8d]">{language === 'ru' ? 'Сохранить' : 'Save'}</button>
+          </div>
+        </div>
+        
+        <div className="mb-4">
+          <div className="bg-[#eaf3ff] border border-[#a2a9b1] p-3 text-xs mb-4">
+             <strong className="block mb-1">{language === 'ru' ? 'Как создавать ссылки в Навигационном Шаблоне:' : 'How to create links in the Navbox:'}</strong>
+             <ul className="list-decimal pl-4 space-y-1">
+               <li>{language === 'ru' ? 'Для создания ссылки просто оберните название в двойные скобки: ' : 'To create a link simply wrap the title in double brackets: '} <code>[[Название статьи]]</code></li>
+               <li>{language === 'ru' ? 'Свой текст гиперссылки можно задать так: ' : 'You can specify a custom text label like this: '} <code>[[Название статьи|Отображаемый текст]]</code></li>
+               <li>{language === 'ru' ? 'Система автоматически найдет статью (О государстве, Войне или Событии) по названию.' : 'The system will automatically find the article (Nation, War, or Event) by title.'}</li>
+               <li>{language === 'ru' ? 'Разделяйте такие ссылки точкой с помощью кнопки [•]' : 'Separate links with a bullet using the [•] button.'}</li>
+             </ul>
+             <p className="mt-2 text-[#0645ad]">{language === 'ru' ? 'Если вставить ссылку на несуществующую статью, вы увидите уведомление при нажатии.' : 'If you paste a link to a non-existent article, you will be notified upon click.'}</p>
+          </div>
+          
+          <div className="flex gap-4">
+            <div className="flex-1">
+              <label className="block text-xs font-bold mb-1">{language === 'ru' ? 'Заголовок шаблона' : 'Template Title'}</label>
+              <input className="w-full border border-[#a2a9b1] p-2" value={draft.title} onChange={(e) => setDraft({...draft, title: e.target.value})} />
+            </div>
+            <div>
+              <label className="block text-xs font-bold mb-1">{language === 'ru' ? 'Цвет (HEX)' : 'Color (HEX)'}</label>
+              <div className="flex gap-2 items-center">
+                <input type="color" className="w-8 h-8 p-0 border-0" value={draft.color || '#ccffcc'} onChange={(e) => setDraft({...draft, color: e.target.value})} />
+                <input type="text" className="w-24 border border-[#a2a9b1] p-2 text-xs uppercase" value={draft.color || '#ccffcc'} onChange={(e) => setDraft({...draft, color: e.target.value})} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          {draft.groups.map((g: any, i: number) => (
+            <div key={g.id || i} className="border border-[#a2a9b1] bg-white p-3 flex gap-4 items-start">
+              <div className="flex-1">
+                <input className="w-full font-bold border border-[#a2a9b1] bg-[#eaecf0] p-1 text-sm mb-2" value={g.title} onChange={(e) => {
+                  const newG = [...draft.groups];
+                  newG[i].title = e.target.value;
+                  setDraft({...draft, groups: newG});
+                }} placeholder={language === 'ru' ? 'Название группы (напр. История)' : 'Group Title (e.g. History)'} />
+                <div className="flex gap-2 mb-1">
+                  <button onClick={() => {
+                     const newG = [...draft.groups];
+                     newG[i].linksText = (newG[i].linksText || '') + ' • ';
+                     setDraft({...draft, groups: newG});
+                  }} className="px-2 py-1 bg-gray-200 hover:bg-gray-300 text-black text-xs font-bold border border-gray-400 rounded-sm" title={language === 'ru' ? 'Вставить точку-маркер' : 'Insert bullet point'}>
+                     •
+                  </button>
+                </div>
+                <textarea className="w-full border border-[#a2a9b1] p-2 text-xs min-h-[60px]" value={g.linksText || ''} onChange={(e) => {
+                  const newG = [...draft.groups];
+                  newG[i].linksText = e.target.value;
+                  setDraft({...draft, groups: newG});
+                }} placeholder={language === 'ru' ? 'Markdown ссылки: [статья](event:id:index) • [другая](war:id)' : 'Markdown links: [article](event:id:index) • [other](war:id)'} />
+              </div>
+              <button 
+                onClick={() => {
+                  const newG = draft.groups.filter((_: any, idx: number) => idx !== i);
+                  setDraft({...draft, groups: newG});
+                }}
+                className="text-red-600 hover:underline text-xs shrink-0"
+              >
+                {language === 'ru' ? 'Удалить' : 'Remove'}
+              </button>
+            </div>
+          ))}
+        </div>
+        
+        <button 
+          onClick={() => setDraft({...draft, groups: [...draft.groups, { id: Math.random().toString(36).substring(7), title: 'Новая группа', linksText: '' }]})}
+          className="mt-4 text-[#0645ad] hover:underline text-xs"
+        >
+          {language === 'ru' ? '+ Добавить группу' : '+ Add Group'}
+        </button>
+      </div>
+    );
+  }
+
+  const renderNavboxGroup = (g: any, index: number) => {
+     // Render the custom links content using Markdown mapper
+     return (
+       <div key={g.id || index} className="flex border-t border-white flex-col sm:flex-row">
+         <div 
+            className="w-full sm:w-[150px] shrink-0 border-r border-white p-2 font-bold flex items-center justify-center sm:justify-start text-center sm:text-left"
+            style={{ backgroundColor: draft?.color || wiki.navbox?.color || '#ccffcc', filter: 'brightness(0.95)' }}
+         >
+           {g.title}
+         </div>
+         <div className="flex-1 bg-[#f9f9f9] p-2 navbox-links [&_p]:m-0">
+            <Markdown urlTransform={(value) => value} components={buildMarkdownComps}>{processWikiLinks(g.linksText || '')}</Markdown>
+         </div>
+       </div>
+     );
+  };
+
+  const navboxColor = wiki.navbox?.color || '#ccffcc';
+
+  return (
+    <div className="relative group w-full mt-4">
+      {wiki.navbox ? (
+        <div className="w-full border border-[#a2a9b1] text-[13px] font-sans">
+          <div className="p-2 text-center font-bold border-b border-white flex items-center justify-between" style={{ backgroundColor: navboxColor }}>
+            <div className="w-6" /> {/* spacer */}
+            <span className="flex items-center gap-2">
+               {wiki.navbox.title}
+               {wiki.flag && <img src={wiki.flag} className="h-[20px] object-cover inline-block border border-[#a2a9b1]" alt="" />}
+            </span>
+            <div className="w-6 flex justify-end">
+               {isOwner && (
+                 <button onClick={() => { initDraft(); setIsEditing(true); }} className="opacity-0 group-hover:opacity-100 text-[10px] text-[#0645ad] hover:underline bg-white/70 px-1 rounded-sm">
+                   {language === 'ru' ? 'править' : 'edit'}
+                 </button>
+               )}
+            </div>
+          </div>
+          <div className="flex flex-col">
+            {wiki.navbox.groups.map(renderNavboxGroup)}
+          </div>
+        </div>
+      ) : (
+        isOwner && (
+          <button onClick={() => { initDraft(); setIsEditing(true); }} className="text-[#0645ad] text-xs hover:underline">
+            {language === 'ru' ? '+ Создать навигационный шаблон' : '+ Create Navigation Box'}
+          </button>
+        )
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const { 
     connect, connected, nations, alliances, unions, myNation, requestSpawn, spawnStatus, spawnMessage,
@@ -872,7 +1321,7 @@ export default function App() {
   const [isGeneratingNationArticle, setIsGeneratingNationArticle] = useState(false);
   const [nationAiEditPrompt, setNationAiEditPrompt] = useState('');
 
-  const [editingEventArticle, setEditingEventArticle] = useState<{ nationId: string, eventIndex: number } | null>(null);
+  const [editingEventArticle, setEditingEventArticle] = useState<{ nationId: string, eventIndex: number, worldEventId?: string } | null>(null);
   const [viewingEventArticle, setViewingEventArticle] = useState<{ nationId: string, eventIndex?: number, isNew?: boolean, isEditing?: boolean } | null>(null);
   const [eventArticleDraft, setEventArticleDraft] = useState({ title: '', text: '', infoboxKeys: [] as string[], infoboxValues: [] as string[], description: '', image: '' });
   const { isCheckingImage: isCheckingArticleImage, moderationError: articleModerationError } = useImageModeration(eventArticleDraft.image, language);
@@ -884,7 +1333,10 @@ export default function App() {
      if (!wiki) return;
      setIsGeneratingNationArticle(true);
      
-     const history = (wiki.events || []).map((e: any) => new Date(e.time).toLocaleString(language === 'ru' ? 'ru-RU' : 'en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) + ': ' + e.description).join('\n');
+     const history = (wiki.events || []).map((e: any) => new Date(e.timestamp).toLocaleString(language === 'ru' ? 'ru-RU' : 'en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) + ': ' + e.description).join('\n');
+     const state = useGameStore.getState();
+     const nationsListCtx = state.wikiNations.map((n: any) => n.name).join(', ');
+     const newsCtx = state.news.map((n: any) => '[' + new Date(n.timestamp).toLocaleDateString() + '] ' + n.text).join('\n').substring(0, 5000);
      
      let prompt = '';
      if (customPrompt) {
@@ -893,17 +1345,25 @@ export default function App() {
          Текущий текст: "${descriptionDraft || 'Отсутствует'}"
          Просьба пользователя: "${customPrompt}"
          
-         История для контекста (если пригодится):
-         ${history.substring(0, 500)} // обрезано
+         ВАЖНО: Пиши СТРОГО о государстве "${wiki.name}". Не выдумывай другие государства, не придумывай события, которых нет в истории (например, "Временный Консорциум" и прочее, если их нет ниже).
+         Важно: ты МОЖЕШЬ вставлять ссылки на другие государства из известного списка. Для этого оберни название в квадратные скобки: [[Название]].
+         Известные государства в мире: ${nationsListCtx}
+         Контекст из мировых новостей: ${newsCtx}
+         История для контекста:
+         ${history.substring(0, 1500)}
          
-         Верни ТОЛЬКО новый текст статьи.`
+         Отредактируй текст и верни ТОЛЬКО его.`
          :
          `You are editing the Wiki article for the nation "${wiki.name}".
          Current text: "${descriptionDraft || 'None'}"
          User's request: "${customPrompt}"
          
-         History context (if needed):
-         ${history.substring(0, 500)}
+         IMPORTANT: Write STRICTLY about the nation "${wiki.name}". Do not hallucinate other nations or pre-histories not present in the timeline.
+         Important: you CAN insert links to other nations from the known list. Wrap the nation name in double square brackets: [[Name]].
+         Known nations in the world: ${nationsListCtx}
+         World News Context: ${newsCtx}
+         History context:
+         ${history.substring(0, 1500)}
          
          Return ONLY the updated article text.`;
      } else {
@@ -911,6 +1371,10 @@ export default function App() {
          `Напиши интересную Вики-статью о великом (или не очень) государстве под названием "${wiki.name}".
          Сделай акцент на его истории. Объем - 2 абзаца.
          
+         ВАЖНО: Описывай только факты из переданной истории или общие фразы. Не выдумывай имена Консорциумов или других лидеров, которых нет в игре.
+         Важно: ты МОЖЕШЬ вставлять ссылки на другие государства из списка если это было в новостях или истории. Формат: [[Название]].
+         Известные государства: ${nationsListCtx}
+         Контекст мировых новостей: ${newsCtx}
          Краткая хроника:
          ${history}
          `
@@ -918,6 +1382,10 @@ export default function App() {
          `Write an interesting Wikipedia style article about the nation "${wiki.name}".
          Focus on its history. Length - 2 paragraphs.
          
+         IMPORTANT: Use only the facts from the provided timeline. Do not invent new factions or names not listed.
+         Important: you CAN insert links to other nations from the list if relevant. Format: [[Name]].
+         Known nations: ${nationsListCtx}
+         World News Context: ${newsCtx}
          Short timeline:
          ${history}
          `;
@@ -980,7 +1448,8 @@ export default function App() {
   const [showWiki, setShowWiki] = useState(false);
   const [selectedWikiNationId, setSelectedWikiNationId] = useState<string | null>(null);
   const [selectedWikiWarId, setSelectedWikiWarId] = useState<string | null>(null);
-  const [wikiTab, setWikiTab] = useState<'nations'|'wars'>('nations');
+  const [viewingWorldEvent, setViewingWorldEvent] = useState<any | null>(null);
+  const [wikiTab, setWikiTab] = useState<'nations'|'wars'|'events'>('nations');
 
   // Alliances UI State
   const [showAlliances, setShowAlliances] = useState(false);
@@ -1147,6 +1616,12 @@ export default function App() {
   }, [flagSearch]);
 
   const socket = useGameStore(state => state.socket);
+
+  useEffect(() => {
+    const fn = (e: any) => setViewingWorldEvent(e.detail);
+    window.addEventListener('viewWorldEvent', fn);
+    return () => window.removeEventListener('viewWorldEvent', fn);
+  }, []);
 
   useEffect(() => {
     if (socket) {
@@ -3016,6 +3491,12 @@ export default function App() {
               >
                 {language === 'ru' ? 'Войны' : 'Wars'}
               </button>
+              <button 
+                onClick={() => { setWikiTab('events'); setSelectedWikiWarId(null); setSelectedWikiNationId(null); }} 
+                className={`flex-1 py-2 text-sm font-bold transition-colors ${wikiTab === 'events' ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}
+              >
+                {language === 'ru' ? 'События' : 'Events'}
+              </button>
             </div>
             <div className="flex-1 overflow-y-auto custom-scrollbar flex p-4 bg-[#f8f9fa] text-gray-900 border-x border-gray-300">
               {wikiTab === 'nations' ? (
@@ -3048,14 +3529,46 @@ export default function App() {
                 <div className="flex w-full gap-6">
                   {(() => {
                     const eventNation = wikiNations.find(w => w.id === viewingEventArticle.nationId);
-                    if (!eventNation) return <p>Nation not found.</p>;
+                    if (!eventNation) return (
+                      <div className="w-full">
+                        <button onClick={() => setViewingEventArticle(null)} className="self-start text-[#0645ad] hover:underline flex items-center gap-1 mb-4 text-sm font-sans">
+                          <ArrowLeft className="w-4 h-4"/> {language === 'ru' ? 'Назад' : 'Back'}
+                        </button>
+                        <p>{language === 'ru' ? 'Государство не найдено.' : 'Nation not found.'}</p>
+                      </div>
+                    );
                     const ev = viewingEventArticle.isNew ? {
                       timestamp: Date.now(),
                       description: language === 'ru' ? 'Новое событие' : 'New Event',
                       customWiki: { title: '', text: '', infobox: {}, image: '' },
                       customArticle: null
-                    } : eventNation.events[viewingEventArticle.eventIndex!];
-                    if (!ev) return <p>Event not found.</p>;
+                    } : (eventNation.events || [])[viewingEventArticle.eventIndex!];
+                    
+                    if (!ev) {
+                       const isOwner = myDiplomaticEntity?.id === eventNation.id || myNation?.id === eventNation.id;
+                       return (
+                         <div className="w-full">
+                           <button onClick={() => setViewingEventArticle(null)} className="self-start text-[#0645ad] hover:underline flex items-center gap-1 mb-4 text-sm font-sans">
+                             <ArrowLeft className="w-4 h-4"/> {language === 'ru' ? 'Назад к государству' : 'Back to Nation'}
+                           </button>
+                           <h1 className="text-3xl font-serif text-black mb-4">{language === 'ru' ? 'Статья не найдена' : 'Article not found'}</h1>
+                           <p className="mb-4">{language === 'ru' ? 'Данная статья не существует или была удалена.' : 'This article does not exist or was deleted.'}</p>
+                           {isOwner && (
+                             <button
+                               onClick={() => {
+                                 setEventArticleDraft({
+                                   title: '', text: '', description: language === 'ru' ? 'Новая статья' : 'New Article', image: '', infoboxKeys: [], infoboxValues: []
+                                 });
+                                 setViewingEventArticle({ nationId: eventNation.id, isNew: true, isEditing: true });
+                               }}
+                               className="px-4 py-2 bg-[#3366cc] text-white hover:bg-[#2a4b8d] font-bold text-sm shadow-sm font-sans"
+                             >
+                               {language === 'ru' ? 'Создать эту статью' : 'Create this article'}
+                             </button>
+                           )}
+                         </div>
+                       );
+                    }
                     
                     if (viewingEventArticle.isEditing) {
                         return (
@@ -3081,38 +3594,45 @@ export default function App() {
                                         onClick={() => {
                                           setIsGeneratingNationArticle(true);
                                           const newsCtx = useGameStore.getState().news.map(n => `[${new Date(n.timestamp).toLocaleString(language === 'ru' ? 'ru-RU' : 'en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}] ${n.text}`).join('\n').substring(0, 5000);
+                                          const nationsListCtx = useGameStore.getState().wikiNations.map(n => n.name).join(', ');
                                           ai.models.generateContent({
                                              model: 'gemini-2.5-flash',
                                              contents: [
                                                language === 'ru' ?
-                                               `Сгенерируй Вики-статью об историческом событии: "${viewingEventArticle.isNew ? eventArticleDraft.description : ev.description}".
+                                               `Сгенерируй Вики-статью об историческом событии в государстве "${eventNation.name}": "${viewingEventArticle.isNew ? eventArticleDraft.description : ev.description}".
                                                
                                                Используй ### для заголовков секций. НЕ используй ===.
                                                ВАЖНО: Обязательно напиши вводный абзац в самом начале текста статьи ДО первого заголовка ###. Текст должен сразу начинаться с описания события (что, где, когда).
-                                               НЕ фантазируй о том, что было до основания государств, строго описывай само событие по промпту.
+                                               НЕ фантазируй о том, что было до основания государств, строго описывай само событие по промпту и касательно государства "${eventNation.name}".
                                                Если событие прошло, напиши дату (или диапазон дат) в одной строке инфобокса под ключом "Дата" (не создавай два поля типа Начало/Конец).
-                                               Если в событии имеются противоборствующие фракции (например, революционеры против правительства, или митинг), оформи это в инфобоксе по шаблону сторон: (Сторона 1, Сторона 2, Лидеры 1, Лидеры 2), но без терминов Защитники/Агрессоры.
+                                               Если в событии имеются противоборствующие фракции (например, революционеры против правительства), создай в инфобоксе отдельные ключи для сторон: "Сторона 1", "Сторона 2", "Лидеры 1", "Лидеры 2" (а не пиши всё в одной строке).
+                                               
+                                               Важно: ты МОЖЕШЬ вставлять ссылки на другие государства из известного списка. Для этого оберни название в квадратные скобки: [[Название]]. Делай это и в тексте, и в инфобоксе (в значениях полей).
+                                               Известные государства в мире: ${nationsListCtx}
                                                
                                                Пользовательский промпт (доп. детали): ${nationAiEditPrompt}
                                                Контекст мировых новостей:
                                                ${newsCtx}
                                                
                                                Верни ТОЛЬКО валидный JSON (без \`\`\`json):
-                                               { "title": "...", "text": "...", "infobox": { "Ключ": "Значение" }, "image": "опционально ссылка на картинку" }` :
-                                               `Generate Wiki article for: "${viewingEventArticle.isNew ? eventArticleDraft.description : ev.description}".
+                                               { "title": "...", "text": "...", "infobox": { "Ключ": "Значение" }, "image": "опционально ссылка на картинку", "mapColors": {"НазваниеСтраны": "hex_color"} }` :
+                                               `Generate Wiki article for historical event in the nation "${eventNation.name}": "${viewingEventArticle.isNew ? eventArticleDraft.description : ev.description}".
                                                
                                                Use ### for section headings. Do NOT use ===.
                                                IMPORTANT: You MUST write an introductory paragraph at the very beginning of the article text BEFORE the first ### heading. The text should immediately start with a summary of the event.
-                                               Do NOT hallucinate history prior to the founding of nations unless requested in the prompt.
+                                               Do NOT hallucinate history prior to the founding of nations unless requested in the prompt, strictly relate to the event and the nation "${eventNation.name}".
                                                If the event has ended, combine the start and end dates into a single "Date" field in the infobox.
-                                               If there are opposing factions (e.g. revolutionaries vs government), use an infobox template grouping sides: (Side 1, Side 2, Leaders 1, Leaders 2) but do not use standard war terms like Defender/Aggressor.
+                                               If there are opposing factions (e.g. revolutionaries vs government), use separate infobox keys for sides: "Side 1", "Side 2", "Leaders 1", "Leaders 2" (do not put them all in one string).
+                                               
+                                               Important: you CAN insert links to other nations from the known list. Wrap the nation name in double square brackets: [[Name]]. Do this in both text and infobox values.
+                                               Known nations in the world: ${nationsListCtx}
                                                
                                                Prompt (user desc): ${nationAiEditPrompt}
                                                World news context:
                                                ${newsCtx}
                                                
                                                Return ONLY valid JSON (without \`\`\`json):
-                                               { "title": "...", "text": "...", "infobox": { "Key": "Value" }, "image": "optional image url" }`
+                                               { "title": "...", "text": "...", "infobox": { "Key": "Value" }, "image": "optional image url", "mapColors": {"CountryName": "hex_color"} }`
                                              ]
                                            }).then(res => {
                                               try {
@@ -3243,29 +3763,24 @@ export default function App() {
                           <button onClick={() => setViewingEventArticle(null)} className="self-start text-[#0645ad] hover:underline flex items-center gap-1 mb-4 text-sm font-sans">
                             <ArrowLeft className="w-4 h-4"/> {language === 'ru' ? 'Назад к государству' : 'Back to Nation'}
                           </button>
-                          <h1 className="text-4xl font-serif border-b border-[#a2a9b1] pb-2 mb-4 text-black inline-flex items-center gap-3">
-                            {ev.customWiki?.title || ev.description}
-                          </h1>
+                          <div className="flex justify-between items-end border-b border-[#a2a9b1] pb-2 mb-4">
+                            <h1 className="text-4xl font-serif text-black inline-flex items-center gap-3">
+                              {ev.customWiki?.title || ev.description}
+                            </h1>
+                            <button
+                              onClick={() => {
+                                const title = ev.customWiki?.title || (language === 'ru' ? 'Статья' : 'Article');
+                                navigator.clipboard.writeText(`[[${title}]]`);
+                              }}
+                              className="text-xs text-[#0645ad] hover:underline flex items-center gap-1 font-sans"
+                              title={language === 'ru' ? 'Копировать ссылку для навигационного шаблона' : 'Copy link for navbox'}
+                            >
+                              [🔗 {language === 'ru' ? 'Ссылка на статью' : 'Article link'}]
+                            </button>
+                          </div>
                           <div className="prose prose-blue max-w-none text-gray-800 font-sans">
                             <div className="lead text-base">
-                              <Markdown components={{
-                                h1: ({node, ...props}: any) => <h1 className="text-3xl font-serif mt-6 mb-3 text-black border-b border-[#a2a9b1] pb-2" {...props} />,
-                                h2: ({node, ...props}: any) => <h2 className="text-2xl font-serif mt-6 mb-3 text-black border-b border-[#a2a9b1] pb-2" {...props} />,
-                                h3: ({node, ...props}: any) => <h3 className="text-xl font-serif mt-4 mb-2 text-black border-b border-[#a2a9b1] pb-1" {...props} />,
-                                p: ({node, ...props}: any) => <p className="mb-4 text-base leading-relaxed" {...props} />,
-                                ul: ({node, ...props}: any) => <ul className="list-disc pl-6 mb-4 space-y-1" {...props} />,
-                                ol: ({node, ...props}: any) => <ol className="list-decimal pl-6 mb-4 space-y-1" {...props} />,
-                                strong: ({node, ...props}: any) => <strong className="font-bold text-black" {...props} />,
-                                a: ({node, href, children, ...props}: any) => {
-                                  if (href?.startsWith('nation:')) {
-                                    return <span onClick={() => { setViewingEventArticle(null); setSelectedWikiNationId(href.split(':')[1]); }} className="text-[#0645ad] hover:underline cursor-pointer" {...props}>{children}</span>
-                                  }
-                                  if (href?.startsWith('war:')) {
-                                    return <span onClick={() => { setViewingEventArticle(null); setSelectedWikiNationId(null); setSelectedWikiWarId(href.split(':')[1]); setWikiTab('wars'); }} className="text-[#0645ad] hover:underline cursor-pointer" {...props}>{children}</span>
-                                  }
-                                  return <a href={href} className="text-[#0645ad] hover:underline" {...props}>{children}</a>
-                                }
-                              }}>{ev.customWiki?.text || ev.customArticle || ev.description}</Markdown>
+                              <Markdown urlTransform={(value) => value} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, selectedWikiNationId, setEventArticleDraft, myDiplomaticEntity?.id === selectedWikiNationId || myNation?.id === selectedWikiNationId)}>{processWikiLinks(ev.customWiki?.text || ev.customArticle || ev.description || '')}</Markdown>
                             </div>
                           </div>
                         </div>
@@ -3275,11 +3790,13 @@ export default function App() {
                             <div className="bg-[#eaecf0] py-2 px-3 text-center border-b border-[#a2a9b1]">
                               <span className="font-bold text-base">{ev.customWiki?.title || ev.description}</span>
                             </div>
-                            {ev.customWiki?.image && (
+                            {ev.customWiki?.mapColors ? (
+                              <CustomColorsMap mapColors={ev.customWiki.mapColors} wikiNations={wikiNations} nations={nations} lang={language} bgImage={bgImage} gridSize={gridSize} />
+                            ) : ev.customWiki?.image ? (
                               <div className="p-2 border-b border-[#a2a9b1] bg-white text-center">
                                 <img src={ev.customWiki.image} alt="" className="w-full h-auto border border-[#a2a9b1] shadow-sm mb-1"/>
                               </div>
-                            )}
+                            ) : null}
                             <div className="p-2 border-b border-[#a2a9b1]">
                               {(!ev.customWiki?.infobox || !Object.keys(ev.customWiki.infobox).some(k => k.toLowerCase() === 'дата' || k.toLowerCase() === 'date')) && (
                                 <div className="flex gap-2 border-b border-gray-200 last:border-0 py-1.5 break-words">
@@ -3310,7 +3827,7 @@ export default function App() {
                                        {normalKeys.map(([k, v], idx) => (
                                           <div key={idx} className="flex gap-2 border-b border-gray-200 last:border-0 py-1.5 break-words">
                                              <div className="font-bold capitalize w-[80px] shrink-0">{k}</div>
-                                             <div className="flex-1 break-words">{v}</div>
+                                             <div className="flex-1 break-words"><Markdown urlTransform={val => val} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, selectedWikiNationId, setEventArticleDraft, myDiplomaticEntity?.id === selectedWikiNationId || myNation?.id === selectedWikiNationId, true)}>{processWikiLinks(String(v))}</Markdown></div>
                                           </div>
                                        ))}
                                     </>
@@ -3345,8 +3862,8 @@ export default function App() {
                                       <>
                                         <div className="bg-[#eaecf0] py-1 text-center font-bold border-b border-t border-[#a2a9b1] text-xs">{language === 'ru' ? 'Стороны' : 'Belligerents'}</div>
                                         <div className="flex border-b border-[#a2a9b1]">
-                                           <div className="flex-1 p-2 border-r border-[#a2a9b1] break-words whitespace-pre-wrap">{String(side1 || '')}</div>
-                                           <div className="flex-1 p-2 break-words whitespace-pre-wrap">{String(side2 || '')}</div>
+                                           <div className="flex-1 p-2 border-r border-[#a2a9b1] break-words whitespace-pre-wrap"><Markdown urlTransform={val => val} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, selectedWikiNationId, setEventArticleDraft, myDiplomaticEntity?.id === selectedWikiNationId || myNation?.id === selectedWikiNationId, true)}>{processWikiLinks(String(side1 || ''))}</Markdown></div>
+                                           <div className="flex-1 p-2 break-words whitespace-pre-wrap"><Markdown urlTransform={val => val} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, selectedWikiNationId, setEventArticleDraft, myDiplomaticEntity?.id === selectedWikiNationId || myNation?.id === selectedWikiNationId, true)}>{processWikiLinks(String(side2 || ''))}</Markdown></div>
                                         </div>
                                       </>
                                     )}
@@ -3354,8 +3871,8 @@ export default function App() {
                                       <>
                                         <div className="bg-[#eaecf0] py-1 text-center font-bold border-b border-[#a2a9b1] text-xs">{language === 'ru' ? 'Лидеры' : 'Leaders'}</div>
                                         <div className="flex border-b border-[#a2a9b1] text-xs">
-                                           <div className="flex-1 p-2 border-r border-[#a2a9b1] break-words whitespace-pre-wrap">{String(leaders1 || '')}</div>
-                                           <div className="flex-1 p-2 break-words whitespace-pre-wrap">{String(leaders2 || '')}</div>
+                                           <div className="flex-1 p-2 border-r border-[#a2a9b1] break-words whitespace-pre-wrap"><Markdown urlTransform={val => val} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, selectedWikiNationId, setEventArticleDraft, myDiplomaticEntity?.id === selectedWikiNationId || myNation?.id === selectedWikiNationId, true)}>{processWikiLinks(String(leaders1 || ''))}</Markdown></div>
+                                           <div className="flex-1 p-2 break-words whitespace-pre-wrap"><Markdown urlTransform={val => val} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, selectedWikiNationId, setEventArticleDraft, myDiplomaticEntity?.id === selectedWikiNationId || myNation?.id === selectedWikiNationId, true)}>{processWikiLinks(String(leaders2 || ''))}</Markdown></div>
                                         </div>
                                       </>
                                     )}
@@ -3363,8 +3880,8 @@ export default function App() {
                                       <>
                                         <div className="bg-[#eaecf0] py-1 text-center font-bold border-b border-[#a2a9b1] text-xs">{language === 'ru' ? 'Силы сторон' : 'Forces & Strength'}</div>
                                         <div className="flex border-b border-[#a2a9b1] text-xs text-center font-bold">
-                                           <div className="flex-1 p-2 border-r border-[#a2a9b1] break-words whitespace-pre-wrap">{String(forces1 || '-')}</div>
-                                           <div className="flex-1 p-2 break-words whitespace-pre-wrap">{String(forces2 || '-')}</div>
+                                           <div className="flex-1 p-2 border-r border-[#a2a9b1] break-words whitespace-pre-wrap"><Markdown urlTransform={val => val} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, selectedWikiNationId, setEventArticleDraft, myDiplomaticEntity?.id === selectedWikiNationId || myNation?.id === selectedWikiNationId, true)}>{processWikiLinks(String(forces1 || '-'))}</Markdown></div>
+                                           <div className="flex-1 p-2 break-words whitespace-pre-wrap"><Markdown urlTransform={val => val} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, selectedWikiNationId, setEventArticleDraft, myDiplomaticEntity?.id === selectedWikiNationId || myNation?.id === selectedWikiNationId, true)}>{processWikiLinks(String(forces2 || '-'))}</Markdown></div>
                                         </div>
                                       </>
                                     )}
@@ -3372,8 +3889,8 @@ export default function App() {
                                       <>
                                         <div className="bg-[#eaecf0] py-1 text-center font-bold border-b border-[#a2a9b1] text-xs">{language === 'ru' ? 'Потери' : 'Casualties'}</div>
                                         <div className="flex text-xs text-center text-red-800">
-                                           <div className="flex-1 p-2 border-r border-[#a2a9b1] break-words whitespace-pre-wrap">{String(casualties1 || '-')}</div>
-                                           <div className="flex-1 p-2 break-words whitespace-pre-wrap">{String(casualties2 || '-')}</div>
+                                           <div className="flex-1 p-2 border-r border-[#a2a9b1] break-words whitespace-pre-wrap"><Markdown urlTransform={val => val} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, selectedWikiNationId, setEventArticleDraft, myDiplomaticEntity?.id === selectedWikiNationId || myNation?.id === selectedWikiNationId, true)}>{processWikiLinks(String(casualties1 || '-'))}</Markdown></div>
+                                           <div className="flex-1 p-2 break-words whitespace-pre-wrap"><Markdown urlTransform={val => val} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, selectedWikiNationId, setEventArticleDraft, myDiplomaticEntity?.id === selectedWikiNationId || myNation?.id === selectedWikiNationId, true)}>{processWikiLinks(String(casualties2 || '-'))}</Markdown></div>
                                         </div>
                                       </>
                                     )}
@@ -3412,38 +3929,60 @@ export default function App() {
                     const wiki = wikiNations.find(w => w.id === selectedWikiNationId);
                     if (!wiki) return <p>Nation not found.</p>;
                     return (
-                      <>
-                        <div className="flex-1 flex flex-col pr-4 border-r border-[#a2a9b1]">
-                          <button onClick={() => setSelectedWikiNationId(null)} className="self-start text-[#0645ad] hover:underline flex items-center gap-1 mb-4 text-sm font-sans">
-                            <ArrowLeft className="w-4 h-4"/> {t('backToMain')}
-                          </button>
-                          <h1 className="text-4xl font-serif border-b border-[#a2a9b1] pb-2 mb-4 text-black inline-flex items-center gap-3">
-                            {wiki.name}
-                            {wiki.destroyedAt && <span className="text-sm bg-[#eaecf0] text-gray-700 px-2 py-1 rounded border border-[#a2a9b1] align-middle font-sans">{t('defunct')}</span>}
-                            {!wiki.destroyedAt && myNation?.id === wiki.id && (
-                              <button
-                                onClick={() => {
-                                  setDescriptionDraft(wiki.customDescription || '');
-                                  setEditingDescriptionId(wiki.id);
-                                }}
-                                className="ml-auto text-xs bg-[#f8f9fa] border border-[#a2a9b1] hover:bg-[#eaecf0] text-black px-2 py-1 rounded-sm font-sans"
-                              >
-                                {t('editArticle')}
-                              </button>
-                            )}
-                          </h1>
+                      <div className="w-full flex flex-col gap-8">
+                        <div className="flex w-full gap-6">
+                          <div className="flex-1 flex flex-col pr-4 border-r border-[#a2a9b1]">
+                            <button onClick={() => setSelectedWikiNationId(null)} className="self-start text-[#0645ad] hover:underline flex items-center gap-1 mb-4 text-sm font-sans">
+                              <ArrowLeft className="w-4 h-4"/> {t('backToMain')}
+                            </button>
+                          <div className="flex justify-between items-end border-b border-[#a2a9b1] pb-2 mb-4">
+                            <h1 className="text-4xl font-serif text-black inline-flex items-center gap-3">
+                              {wiki.name}
+                              {wiki.destroyedAt && <span className="text-sm bg-[#eaecf0] text-gray-700 px-2 py-1 rounded border border-[#a2a9b1] align-middle font-sans">{t('defunct')}</span>}
+                              {!wiki.destroyedAt && myNation?.id === wiki.id && (
+                                <button
+                                  onClick={() => {
+                                    setDescriptionDraft(wiki.customDescription || '');
+                                    setEditingDescriptionId(wiki.id);
+                                  }}
+                                  className="ml-auto text-xs bg-[#f8f9fa] border border-[#a2a9b1] hover:bg-[#eaecf0] text-black px-2 py-1 rounded-sm font-sans"
+                                >
+                                  {t('editArticle')}
+                                </button>
+                              )}
+                            </h1>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(`[[${wiki.name}]]`);
+                              }}
+                              className="text-xs text-[#0645ad] hover:underline flex items-center gap-1 font-sans shrink-0"
+                              title={language === 'ru' ? 'Копировать ссылку для навигационного шаблона' : 'Copy link for navbox'}
+                            >
+                              [🔗 {language === 'ru' ? 'Ссылка' : 'Link'}]
+                            </button>
+                          </div>
                           <div className="prose prose-blue max-w-none text-gray-800 font-sans">
-                            <p className="lead text-base whitespace-pre-wrap">
-                              {wiki.customDescription ? wiki.customDescription : (
+                            <div className="lead text-base whitespace-pre-wrap">
+                              {wiki.customDescription ? <Markdown urlTransform={(value) => value} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, selectedWikiNationId, setEventArticleDraft, myDiplomaticEntity?.id === selectedWikiNationId || myNation?.id === selectedWikiNationId)}>{processWikiLinks(wiki.customDescription)}</Markdown> : (
                                 <>
                                   <span className="font-bold">{wiki.name}</span>{t('wikiDefaultDesc1')}<span className="font-bold text-gray-900">${wiki.peakGdp.toLocaleString()}M</span>
                                   {t('wikiDefaultDesc2')}{new Date(wiki.createdAt).toLocaleString(language === 'ru' ? 'ru-RU' : 'en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
                                   {wiki.destroyedAt ? `${t('wikiDefaultDesc3')}${new Date(wiki.destroyedAt).toLocaleString(language === 'ru' ? 'ru-RU' : 'en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}.` : t('wikiDefaultDesc4')}
                                 </>
                               )}
-                            </p>
+                            </div>
                             
-                            <h2 className="text-2xl font-serif mt-8 mb-4 border-b border-[#a2a9b1] pb-2 text-black">{t('history')}</h2>
+                            <div className="flex items-center justify-between border-b border-[#a2a9b1] mt-8 mb-4 pb-2">
+                              <h2 className="text-2xl font-serif text-black">{t('history')}</h2>
+                              {(myDiplomaticEntity?.id === wiki.id || myNation?.id === wiki.id) && (
+                                <button
+                                  onClick={() => setAddingCustomEventNationId(wiki.id)}
+                                  className="text-xs bg-[#f8f9fa] border border-[#a2a9b1] text-gray-800 px-2 py-1 hover:bg-[#eaecf0] transition-colors"
+                                >
+                                  {language === 'ru' ? 'Добавить событие' : 'Add Event'}
+                                </button>
+                              )}
+                            </div>
                             <div className="relative border-l-2 border-[#a2a9b1] ml-3 pl-4 space-y-4">
                               {wiki.events.map((ev, i) => {
                                 let desc = ev.description;
@@ -3477,7 +4016,27 @@ export default function App() {
                                             {ev.customWiki?.title || (desc === 'Новое событие' || desc === 'New Event' ? (language === 'ru' ? 'Читать статью' : 'Read Article') : desc)}
                                           </div>
                                         ) : (
-                                          <span>{desc}</span>
+                                          <span>
+                                            {desc}
+                                            {(myDiplomaticEntity?.id === wiki.id || myNation?.id === wiki.id) && (
+                                              <span 
+                                                onClick={() => {
+                                                  setViewingEventArticle({ nationId: wiki.id, eventIndex: i, isEditing: true });
+                                                  setEventArticleDraft({
+                                                    title: desc === 'Новое событие' || desc === 'New Event' ? '' : desc,
+                                                    text: '',
+                                                    description: desc,
+                                                    image: '',
+                                                    infoboxKeys: [],
+                                                    infoboxValues: []
+                                                  });
+                                                }}
+                                                className="text-[#0645ad] hover:underline cursor-pointer ml-2 text-xs italic"
+                                              >
+                                                {language === 'ru' ? '[Создать статью]' : '[Create Article]'}
+                                              </span>
+                                            )}
+                                          </span>
                                         )
                                       ) : (
                                         <span>
@@ -3740,12 +4299,20 @@ export default function App() {
                             </div>
                           </div>
                         </div>
-                      </>
+                        </div>
+                        <WikiNavbox 
+                          wiki={wiki} 
+                          isOwner={myDiplomaticEntity?.id === wiki.id || myNation?.id === wiki.id} 
+                          language={language} 
+                          setViewingEventArticle={setViewingEventArticle} 
+                          buildMarkdownComps={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, selectedWikiNationId, setEventArticleDraft, myDiplomaticEntity?.id === selectedWikiNationId || myNation?.id === selectedWikiNationId)}
+                        />
+                      </div>
                     );
                   })()}
                 </div>
                 )
-              ) : (
+              ) : wikiTab === 'wars' ? (
                 !selectedWikiWarId ? (
                    <div className="w-full space-y-6">
                       <div className="bg-white border text-black border-gray-300 p-6 rounded-lg text-center font-serif shadow-sm">
@@ -3803,30 +4370,24 @@ export default function App() {
                               <button onClick={() => setSelectedWikiWarId(null)} className="self-start text-[#0645ad] hover:underline flex items-center gap-1 mb-4 text-sm">
                                 <ArrowLeft className="w-4 h-4"/> {isRu ? 'Назад к войнам' : 'Back to Wars'}
                               </button>
-                              <h1 className="text-4xl font-serif border-b border-gray-300 pb-2 mb-4 text-black inline-flex items-center gap-3">
-                                {warName}
-                              </h1>
+                              <div className="flex justify-between items-end border-b border-[#a2a9b1] pb-2 mb-4">
+                                <h1 className="text-4xl font-serif text-black inline-flex items-center gap-3">
+                                  {warName}
+                                </h1>
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(`[[${w.customWiki?.title || `War ${w.id}`}|${w.customWiki?.title || warName}]]`);
+                                  }}
+                                  className="text-xs text-[#0645ad] hover:underline flex items-center gap-1 font-sans shrink-0"
+                                  title={language === 'ru' ? 'Копировать ссылку для навигационного шаблона' : 'Copy link for navbox'}
+                                >
+                                  [🔗 {language === 'ru' ? 'Ссылка' : 'Link'}]
+                                </button>
+                              </div>
                               <div className="prose prose-blue max-w-none">
                                 {w.customWiki?.intro ? (
                                   <div className="lead text-lg text-gray-800">
-                                    <Markdown components={{
-                                      h1: ({node, ...props}: any) => <h1 className="text-3xl font-serif mt-6 mb-3 text-black border-b border-[#a2a9b1] pb-2" {...props} />,
-                                      h2: ({node, ...props}: any) => <h2 className="text-2xl font-serif mt-6 mb-3 text-black border-b border-[#a2a9b1] pb-2" {...props} />,
-                                      h3: ({node, ...props}: any) => <h3 className="text-xl font-serif mt-4 mb-2 text-black border-b border-[#a2a9b1] pb-1" {...props} />,
-                                      p: ({node, ...props}: any) => <p className="mb-4 text-base leading-relaxed" {...props} />,
-                                      ul: ({node, ...props}: any) => <ul className="list-disc pl-6 mb-4 space-y-1" {...props} />,
-                                      ol: ({node, ...props}: any) => <ol className="list-decimal pl-6 mb-4 space-y-1" {...props} />,
-                                      strong: ({node, ...props}: any) => <strong className="font-bold text-black" {...props} />,
-                                      a: ({node, href, children, ...props}: any) => {
-                                        if (href?.startsWith('nation:')) {
-                                          return <span onClick={() => { setViewingEventArticle(null); setSelectedWikiNationId(href.split(':')[1]); }} className="text-[#0645ad] hover:underline cursor-pointer" {...props}>{children}</span>
-                                        }
-                                        if (href?.startsWith('war:')) {
-                                          return <span onClick={() => { setViewingEventArticle(null); setSelectedWikiNationId(null); setSelectedWikiWarId(href.split(':')[1]); setWikiTab('wars'); }} className="text-[#0645ad] hover:underline cursor-pointer" {...props}>{children}</span>
-                                        }
-                                        return <a href={href} className="text-[#0645ad] hover:underline" {...props}>{children}</a>
-                                      }
-                                    }}>{w.customWiki.intro}</Markdown>
+                                    <Markdown urlTransform={(value) => value} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab)}>{processWikiLinks(w.customWiki.intro || '')}</Markdown>
                                   </div>
                                 ) : (
                                   <p className="lead text-lg text-gray-800 whitespace-pre-wrap">
@@ -3848,16 +4409,31 @@ export default function App() {
                                   <span>{isRu ? 'Ход войны' : 'Course of War'}</span>
                                   <div className="flex items-center gap-2">
                                     {(w.customWiki?.narrative || w.narrative || wNarrative) && !w.isGeneratingNarrative && (
-                                      <button 
-                                        onClick={() => {
-                                           setWarNarrativeDraft(w.customWiki?.narrative || w.narrative || wNarrative || '');
-                                           setEditingWarNarrativeId(w.id);
-                                           setAiEditPrompt('');
-                                        }}
-                                        className="text-xs font-sans bg-gray-100 hover:bg-gray-200 text-gray-700 px-2 py-1 rounded shadow-sm border border-gray-300 transition-colors flex items-center gap-1"
-                                      >
-                                        <span>✏️ {isRu ? 'Редактировать статью' : 'Edit Article'}</span>
-                                      </button>
+                                      <div className="flex gap-2">
+                                        {w.status === 'active' && (
+                                          <button 
+                                            onClick={() => {
+                                              if (socket) generateWarNarrativeClientSide(w, (id) => {
+                                                const nat = wikiNations.find(wi => wi.id === id) || nations.find(nn => nn.id === id);
+                                                return nat ? nat.name : 'Unknown';
+                                              }, language, socket, language === 'ru' ? 'Допиши статью учитывая новые события войны. Добавляй события в конец.' : 'Append events to the article considering the new events of the war.', JSON.stringify(w.customWiki || {}), useGameStore.getState().news.map(n => '[' + new Date(n.timestamp).toLocaleDateString() + '] ' + n.text).join('\n').substring(0, 5000), useGameStore.getState().wikiNations.map(n => n.name).join(', '));
+                                            }}
+                                            className="text-xs font-sans bg-green-100 hover:bg-green-200 text-green-700 px-2 py-1 rounded shadow-sm border border-green-200 transition-colors flex items-center gap-1"
+                                          >
+                                            <span>♻️ {isRu ? 'Обновить ИИ' : 'Update via AI'}</span>
+                                          </button>
+                                        )}
+                                        <button 
+                                          onClick={() => {
+                                             setWarNarrativeDraft(w.customWiki?.narrative || w.narrative || wNarrative || '');
+                                             setEditingWarNarrativeId(w.id);
+                                             setAiEditPrompt('');
+                                          }}
+                                          className="text-xs font-sans bg-gray-100 hover:bg-gray-200 text-gray-700 px-2 py-1 rounded shadow-sm border border-gray-300 transition-colors flex items-center gap-1"
+                                        >
+                                          <span>✏️ {isRu ? 'Редактировать статью' : 'Edit Article'}</span>
+                                        </button>
+                                      </div>
                                     )}
                                     {!w.customWiki && !w.narrative && !w.isGeneratingNarrative && (
                                       <button 
@@ -3865,7 +4441,7 @@ export default function App() {
                                            if (socket) generateWarNarrativeClientSide(w, (id) => {
                                              const nat = wikiNations.find(wi => wi.id === id) || nations.find(nn => nn.id === id);
                                              return nat ? nat.name : 'Unknown';
-                                           }, language, socket, undefined, undefined, useGameStore.getState().news.map(n => '[' + new Date(n.timestamp).toLocaleDateString() + '] ' + n.text).join('\n').substring(0, 5000));
+                                           }, language, socket, undefined, undefined, useGameStore.getState().news.map(n => '[' + new Date(n.timestamp).toLocaleDateString() + '] ' + n.text).join('\n').substring(0, 5000), useGameStore.getState().wikiNations.map(n => n.name).join(', '));
                                         }}
                                         className="text-xs font-sans bg-blue-100 hover:bg-blue-200 text-blue-700 px-2 py-1 rounded shadow-sm border border-blue-200 transition-colors flex items-center gap-1"
                                       >
@@ -3880,25 +4456,8 @@ export default function App() {
                                   </div>
                                 </h2>
                                 <div className="text-gray-800">
-                                  <Markdown components={{
-                                    h1: ({node, ...props}: any) => <h1 className="text-3xl font-serif mt-6 mb-3 text-black border-b border-[#a2a9b1] pb-2" {...props} />,
-                                    h2: ({node, ...props}: any) => <h2 className="text-2xl font-serif mt-6 mb-3 text-black border-b border-[#a2a9b1] pb-2" {...props} />,
-                                    h3: ({node, ...props}: any) => <h3 className="text-xl font-serif mt-4 mb-2 text-black border-b border-[#a2a9b1] pb-1" {...props} />,
-                                    p: ({node, ...props}: any) => <p className="mb-4 text-base leading-relaxed" {...props} />,
-                                    ul: ({node, ...props}: any) => <ul className="list-disc pl-6 mb-4 space-y-1" {...props} />,
-                                    ol: ({node, ...props}: any) => <ol className="list-decimal pl-6 mb-4 space-y-1" {...props} />,
-                                    strong: ({node, ...props}: any) => <strong className="font-bold text-black" {...props} />,
-                                    a: ({node, href, children, ...props}: any) => {
-                                        if (href?.startsWith('nation:')) {
-                                          return <span onClick={() => { setViewingEventArticle(null); setSelectedWikiNationId(href.split(':')[1]); }} className="text-[#0645ad] hover:underline cursor-pointer" {...props}>{children}</span>
-                                        }
-                                        if (href?.startsWith('war:')) {
-                                          return <span onClick={() => { setViewingEventArticle(null); setSelectedWikiNationId(null); setSelectedWikiWarId(href.split(':')[1]); setWikiTab('wars'); }} className="text-[#0645ad] hover:underline cursor-pointer" {...props}>{children}</span>
-                                        }
-                                        return <a href={href} className="text-[#0645ad] hover:underline" {...props}>{children}</a>
-                                    }
-                                  }}>
-                                    {w.customWiki?.narrative || w.narrative || wNarrative}
+                                  <Markdown urlTransform={(value) => value} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab)}>
+                                    {processWikiLinks(w.customWiki?.narrative || w.narrative || wNarrative || '')}
                                   </Markdown>
                                 </div>
                                 
@@ -4060,7 +4619,113 @@ export default function App() {
                      })()}
                    </div>
                 )
-              )}
+              ) : wikiTab === 'events' ? (() => {
+                const isRu = language === 'ru';
+                return !viewingWorldEvent ? (
+                <div className="w-full space-y-6">
+                   <div className="bg-white border text-black border-gray-300 p-6 rounded-lg text-center font-serif shadow-sm">
+                     <h1 className="text-3xl font-serif mb-2 text-black">{isRu ? 'Мировые события' : 'World Events'}</h1>
+                     <p className="text-gray-600">{isRu ? 'Хроника глобальных международных событий.' : 'The chronicles of global international events.'}</p>
+                     <button
+                        onClick={() => {
+                          setAddingCustomEventNationId('world_event');
+                          setCustomEventDesc('');
+                        }}
+                        className="mt-4 px-4 py-2 bg-[#3366cc] text-white hover:bg-[#2a4b8d] transition-colors font-bold rounded-sm shadow-sm"
+                     >
+                       {isRu ? 'Создать глобальное событие' : 'Create Global Event'}
+                     </button>
+                   </div>
+                   <div className="flex flex-col gap-2">
+                     {[...useGameStore.getState().worldEvents].sort((a, b) => b.timestamp - a.timestamp).map(ev => (
+                       <div key={ev.id} className="bg-white border border-[#a2a9b1] text-black shadow-sm flex flex-col items-start p-4 cursor-pointer hover:bg-gray-50 flex-col relative" onClick={() => setViewingWorldEvent(ev)}>
+                          <span className="text-xl font-serif text-[#0645ad] hover:underline cursor-pointer">{ev.name}</span>
+                          <span className="text-sm text-gray-500 mt-1">{new Date(ev.timestamp).toLocaleString(isRu ? 'ru-RU' : 'en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                          <div className="mt-2 text-gray-800 line-clamp-3">
+                             <Markdown urlTransform={val => val} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, null, null, false, false)}>
+                                {processWikiLinks(ev.customWiki?.text?.substring(0, 300) || ev.name)}
+                             </Markdown>
+                          </div>
+                          {ev.status === 'ongoing' && (
+                            <span className="absolute top-2 right-2 bg-red-100 text-red-800 text-xs font-bold px-2 py-1 rounded">
+                              {isRu ? 'Текущее' : 'Ongoing'}
+                            </span>
+                          )}
+                       </div>
+                     ))}
+                     {useGameStore.getState().worldEvents.length === 0 && (
+                       <div className="text-center text-gray-500 p-4 border border-[#a2a9b1] bg-white italic">
+                         {isRu ? 'Событий пока нет' : 'No events yet'}
+                       </div>
+                     )}
+                   </div>
+                </div>
+                ) : (
+                  <div className="w-full flex flex-col gap-4">
+                     <button onClick={() => setViewingWorldEvent(null)} className="self-start text-[#0645ad] hover:underline flex items-center gap-1 mb-2 text-sm font-sans">
+                       <ArrowLeft className="w-4 h-4"/> {isRu ? 'Назад к списку' : 'Back to list'}
+                     </button>
+                     <div className="flex w-full gap-6">
+                       <div className="flex-1 max-w-[800px] text-black font-serif">
+                          <h1 className="text-4xl font-serif mb-2 pb-1 border-b text-black">{viewingWorldEvent.customWiki?.title || viewingWorldEvent.name}</h1>
+                          <div className="mb-4 text-sm text-gray-500">
+                             {new Date(viewingWorldEvent.timestamp).toLocaleString(isRu ? 'ru-RU' : 'en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                          <div className="prose text-black max-w-none prose-headings:font-serif prose-h1:text-3xl prose-h2:text-2xl prose-h3:text-xl prose-a:text-[#0645ad] prose-neutral">
+                             <Markdown urlTransform={val => val} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, null, null, false, false)}>
+                                {processWikiLinks(viewingWorldEvent.customWiki?.text || isRu ? "Текст пока не написан. Нажмите редактировать, чтобы добавить текст." : "Text is not yet written. Click edit to add text.")}
+                             </Markdown>
+                          </div>
+                       </div>
+                       <div className="w-[300px] shrink-0 space-y-4">
+                          <div className="bg-[#f8f9fa] border border-[#a2a9b1] text-gray-900 shadow-sm overflow-hidden text-[12px] leading-[1.3] font-sans">
+                            <div className="bg-[#eaecf0] py-2 px-3 text-center border-b border-[#a2a9b1]">
+                              <span className="font-bold text-base">{viewingWorldEvent.customWiki?.title || viewingWorldEvent.name}</span>
+                            </div>
+                            {viewingWorldEvent.customWiki?.mapColors ? (
+                              <CustomColorsMap mapColors={viewingWorldEvent.customWiki.mapColors} wikiNations={wikiNations} nations={nations} lang={language} bgImage={bgImage} gridSize={gridSize} />
+                            ) : viewingWorldEvent.customWiki?.image ? (
+                              <div className="p-2 border-b border-[#a2a9b1] bg-white text-center">
+                                <img src={viewingWorldEvent.customWiki.image} alt="" className="w-full h-auto border border-[#a2a9b1] shadow-sm mb-1"/>
+                              </div>
+                            ) : null}
+                            <div className="p-2">
+                               <div className="flex gap-2 border-b border-gray-200 py-1.5 break-words">
+                                 <div className="font-bold w-[80px] shrink-0">{isRu ? 'Дата' : 'Date'}</div>
+                                 <div className="flex-1 break-words">{new Date(viewingWorldEvent.timestamp).toLocaleString(isRu ? 'ru-RU' : 'en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}</div>
+                               </div>
+                               {Object.entries(viewingWorldEvent.customWiki?.infobox || {}).map(([k, v], i) => (
+                                 <div key={i} className="flex gap-2 border-b border-gray-200 last:border-0 py-1.5 break-words">
+                                   <div className="font-bold w-[80px] shrink-0">{k as string}</div>
+                                   <div className="flex-1 break-words">
+                                     <Markdown urlTransform={(x) => x} components={buildMarkdownComponents(language, setSelectedWikiNationId, setSelectedWikiWarId, setViewingEventArticle, setWikiTab, null, null, false, true)}>{processWikiLinks((v as string).toString())}</Markdown>
+                                   </div>
+                                 </div>
+                               ))}
+                            </div>
+                          </div>
+                          
+                          <button
+                            onClick={() => {
+                               setEventArticleDraft({
+                                 title: viewingWorldEvent.customWiki?.title || viewingWorldEvent.name,
+                                 text: viewingWorldEvent.customWiki?.text || '',
+                                 description: viewingWorldEvent.name,
+                                 image: viewingWorldEvent.customWiki?.image || '',
+                                 infoboxKeys: Object.keys(viewingWorldEvent.customWiki?.infobox || {}),
+                                 infoboxValues: Object.values(viewingWorldEvent.customWiki?.infobox || {})
+                               });
+                               setEditingEventArticle({ nationId: 'world_event', eventIndex: useGameStore.getState().worldEvents.findIndex(e => e.id === viewingWorldEvent.id), isEditing: true, worldEventId: viewingWorldEvent.id });
+                            }}
+                            className="w-full px-4 py-2 bg-[#3366cc] text-white hover:bg-[#2a4b8d] font-bold text-sm shadow-sm transition-colors border border-gray-400 font-sans"
+                          >
+                             {isRu ? 'Редактировать событие' : 'Edit Event'}
+                          </button>
+                       </div>
+                     </div>
+                  </div>
+                );
+              })() : null}
             </div>
             {editingDescriptionId && (
               <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
@@ -4149,32 +4814,43 @@ export default function App() {
                     <button
                        onClick={() => {
                           const w = wikiNations.find(wi => wi.id === editingEventArticle.nationId);
-                          if (w && w.events[editingEventArticle.eventIndex] && socket) {
+                          const wev = editingEventArticle.nationId === 'world_event' ? useGameStore.getState().worldEvents.find(e => e.id === editingEventArticle.worldEventId) : null;
+                          if ((w && w.events[editingEventArticle.eventIndex] || wev) && socket) {
                             setIsGeneratingNationArticle(true);
+                            const eventDesc = wev ? wev.name : w!.events[editingEventArticle.eventIndex].description;
+                            const eventTimestamp = wev ? wev.timestamp : w!.events[editingEventArticle.eventIndex].timestamp;
+
+                            const nationsListCtx = useGameStore.getState().wikiNations.map(n => n.name).join(', ');
                             ai.models.generateContent({
                                model: 'gemini-2.5-flash',
                                contents: [
                                  language === 'ru' ?
-                                 `Сгенерируй полноценную Вики-статью об историческом событии: "${w.events[editingEventArticle.eventIndex].description}".
-                                 ВАЖНО: Игнорируй реальные исторические события и страны. Опирайся СТРОГО на события из игры. Игровая дата этого события (используй её в статье): ${new Date(w.events[editingEventArticle.eventIndex].timestamp).toLocaleDateString()}.
+                                 `Сгенерируй полноценную Вики-статью об историческом событии: "${eventDesc}".
+                                 ВАЖНО: Игнорируй реальные исторические события и страны. Опирайся СТРОГО на события из игры. Игровая дата этого события (используй её в статье): ${new Date(eventTimestamp).toLocaleDateString()}.
+                                 Важно: ты МОЖЕШЬ вставлять ссылки на другие государства из известного списка. Для этого оберни название в квадратные скобки: [[Название]]. Делай это и в тексте, и в инфобоксе.
+                                 Известные государства в мире: ${nationsListCtx}
                                  Обязательно напиши вводный абзац в самом начале текста ДО первого заголовка ###. НЕ фантазируй о предыстории до основания государства.
                                  Текущий текст: "${eventArticleDraft.text || 'Отсутствует'}"
                                  Пожелание пользователя: "${nationAiEditPrompt}"
                                  
-                                 Верни валидный JSON с тремя полями:
+                                 Верни валидный JSON с четырьмя полями:
                                  1) "title" - Эпичное название события.
                                  2) "text" - Подробный текст статьи в стиле Википедии (вступление, предыстория, ход, последствия). Разрешено использовать Markdown (заголовки ###, списки, жирный текст). Строго без инфобокса в тексте!
-                                 3) "infobox" - Объект (ключ-значение) с краткими фактами (например, "Место", "Причина", "Итог" и т.п.). Ключи должны быть с большой буквы.` :
-                                 `Generate a full Wiki article about the historical event: "${w.events[editingEventArticle.eventIndex].description}".
-                                 IMPORTANT: Ignore real historical events strings. Strictly base it on game context. The game date for this event is: ${new Date(w.events[editingEventArticle.eventIndex].timestamp).toLocaleDateString()}, use it in the article.
+                                 3) "infobox" - Объект (ключ-значение) с краткими фактами (например, "Место", "Причина", "Итог" и т.п.). Ключи должны быть с большой буквы.
+                                 4) "mapColors" - (необязательно) если это международный конфликт или континент, карта цветов: {"ID_НАЦИИ": "#HEX_СМЫСЛОВОЙ_ЦВЕТ"}. Возможные ID наций: ${useGameStore.getState().wikiNations.map(n => n.id).join(', ')}.` :
+                                 `Generate a full Wiki article about the historical event: "${eventDesc}".
+                                 IMPORTANT: Ignore real historical events strings. Strictly base it on game context. The game date for this event is: ${new Date(eventTimestamp).toLocaleDateString()}, use it in the article.
+                                 Important: you CAN insert links to other nations from the known list. Wrap the nation name in double square brackets: [[Name]]. Do this in both text and infobox values.
+                                 Known nations in the world: ${nationsListCtx}
                                  You MUST write an introductory paragraph at the very beginning BEFORE the first ### heading. Do NOT hallucinate history prior to the founding of nations.
                                  Current text: "${eventArticleDraft.text || 'None'}"
                                  User request: "${nationAiEditPrompt}"
                                  
-                                 Return valid JSON with three fields:
+                                 Return valid JSON with four fields:
                                  1) "title" - Epic name for the event.
                                  2) "text" - Detailed Wikipedia-style article text. Use Markdown formatting like ### headers. Strictly NO infobox in the text!
-                                 3) "infobox" - Object (key-value) with brief facts.`
+                                 3) "infobox" - Object (key-value) with brief facts.
+                                 4) "mapColors" - (optional) if this is an international conflict, a map objects: {"NATION_ID": "#HEX_COLOR"}. Valid nation IDs: ${useGameStore.getState().wikiNations.map(n => n.id).join(', ')}.`
                                ],
                                config: {
                                  responseMimeType: "application/json"
@@ -4184,7 +4860,13 @@ export default function App() {
                                   try {
                                      const txt = res.text.replace(/```json/gi, '').replace(/```/g, '').trim();
                                      const parsed = JSON.parse(txt);
-                                     updateWikiEventArticle(editingEventArticle.nationId, editingEventArticle.eventIndex, parsed.text || '', parsed);
+                                     if (wev) {
+                                         const newEv = { ...wev, customWiki: { ...wev.customWiki, ...parsed, text: parsed.text || '' }};
+                                         socket.emit('updateWorldEvent', newEv);
+                                         setViewingWorldEvent(newEv);
+                                     } else {
+                                         updateWikiEventArticle(editingEventArticle.nationId, editingEventArticle.eventIndex, parsed.text || '', parsed);
+                                     }
                                      setEditingEventArticle(null);
                                   } catch (e) {
                                      console.error('Failed to parse AI response', e);
@@ -4217,14 +4899,22 @@ export default function App() {
                     </button>
                     <button 
                       onClick={() => {
-                        const w = wikiNations.find(wi => wi.id === editingEventArticle.nationId);
-                        if (w && w.events[editingEventArticle.eventIndex]) {
-                           // preserve customWiki if it exists when strictly editing text
-                           const existingCustomWiki = w.events[editingEventArticle.eventIndex].customWiki;
-                           if (existingCustomWiki) {
-                              existingCustomWiki.text = eventArticleDraft.text;
+                        if (editingEventArticle.nationId === 'world_event') {
+                           const wev = useGameStore.getState().worldEvents.find(e => e.id === editingEventArticle.worldEventId);
+                           if (wev) {
+                              const newEv = { ...wev, customWiki: { ...wev.customWiki, text: eventArticleDraft.text }};
+                              if (socket) socket.emit('updateWorldEvent', newEv);
+                              setViewingWorldEvent(newEv);
                            }
-                           updateWikiEventArticle(editingEventArticle.nationId, editingEventArticle.eventIndex, eventArticleDraft.text, existingCustomWiki);
+                        } else {
+                           const w = wikiNations.find(wi => wi.id === editingEventArticle.nationId);
+                           if (w && w.events[editingEventArticle.eventIndex]) {
+                              const existingCustomWiki = w.events[editingEventArticle.eventIndex].customWiki;
+                              if (existingCustomWiki) {
+                                 existingCustomWiki.text = eventArticleDraft.text;
+                              }
+                              updateWikiEventArticle(editingEventArticle.nationId, editingEventArticle.eventIndex, eventArticleDraft.text, existingCustomWiki);
+                           }
                         }
                         setEditingEventArticle(null);
                       }}
@@ -4265,7 +4955,13 @@ export default function App() {
                     <button 
                       onClick={() => {
                         if (customEventDesc.trim() && addingCustomEventNationId) {
-                           useGameStore.getState().addCustomWikiEvent(addingCustomEventNationId, customEventDesc.trim());
+                           if (addingCustomEventNationId === 'world_event') {
+                             const id = Math.random().toString(36).substring(7);
+                             const event = { id, name: customEventDesc.trim(), timestamp: Date.now(), status: 'ongoing', customWiki: {}, involvedNations: [] };
+                             if (socket) socket.emit('addWorldEvent', event);
+                           } else {
+                             useGameStore.getState().addCustomWikiEvent(addingCustomEventNationId, customEventDesc.trim());
+                           }
                            setAddingCustomEventNationId(null);
                            setCustomEventDesc('');
                         }
@@ -4299,7 +4995,7 @@ export default function App() {
                              generateWarNarrativeClientSide(w, (id) => {
                                const nat = wikiNations.find(wi => wi.id === id) || nations.find(nn => nn.id === id);
                                return nat ? nat.name : 'Unknown';
-                             }, language, socket, aiEditPrompt, JSON.stringify(w.customWiki || {}), useGameStore.getState().news.map(n => '[' + new Date(n.timestamp).toLocaleString(language === 'ru' ? 'ru-RU' : 'en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) + '] ' + n.text).join('\n').substring(0, 5000));
+                             }, language, socket, aiEditPrompt, JSON.stringify(w.customWiki || {}), useGameStore.getState().news.map(n => '[' + new Date(n.timestamp).toLocaleString(language === 'ru' ? 'ru-RU' : 'en-US', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) + '] ' + n.text).join('\n').substring(0, 5000), useGameStore.getState().wikiNations.map(n => n.name).join(', '));
                              setEditingWarNarrativeId(null);
                           }
                        }}

@@ -181,6 +181,7 @@ export interface War {
     narrative?: string;
     result?: string;
     casualties?: string;
+    mapColors?: Record<string, string>;
   };
 }
 
@@ -195,6 +196,7 @@ export interface WikiEvent {
     text?: string;
     infobox?: Record<string, string>;
     image?: string;
+    mapColors?: Record<string, string>;
   };
 }
 
@@ -220,6 +222,29 @@ export interface WikiNation {
     flag: string | null;
     timestamp: number;
   }[];
+  navbox?: {
+    title: string;
+    groups: {
+      id: string;
+      title: string;
+      links: { label: string; url: string }[];
+    }[];
+  };
+}
+
+export interface CustomWorldEvent {
+  id: string;
+  name: string;
+  timestamp: number;
+  status: 'ongoing' | 'resolved';
+  customWiki: {
+    title?: string;
+    text?: string;
+    infobox?: Record<string, string>;
+    image?: string;
+    mapColors?: Record<string, string>;
+  };
+  involvedNations: string[];
 }
 
 interface GameState {
@@ -238,6 +263,7 @@ interface GameState {
   mailChats: MailChat[];
   treaties: Treaty[];
   wikiNations: WikiNation[];
+  worldEvents: CustomWorldEvent[];
   myNation: Nation | null;
   pendingRequests: SpawnRequest[];
   spawnStatus: 'idle' | 'pending' | 'success' | 'rejected' | 'error';
@@ -294,6 +320,7 @@ interface GameState {
   updateWikiDescription: (description: string) => void;
   updateWikiEventArticle: (nationId: string, eventIndex: number, article: string, customWiki?: any) => void;
   addCustomWikiEvent: (nationId: string, description: string, customWiki?: any) => void;
+  updateWikiNavbox: (nationId: string, navbox: any) => void;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -312,6 +339,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   mailChats: [],
   treaties: [],
   wikiNations: [],
+  worldEvents: [],
   myNation: null,
   pendingRequests: [],
   spawnStatus: 'idle',
@@ -384,6 +412,12 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (myNat) set({ myNation: myNat });
     });
     newSocket.on('wikiData', (wikiNations: WikiNation[]) => set({ wikiNations }));
+    newSocket.on('worldEventsData', (worldEvents: CustomWorldEvent[]) => set({ worldEvents }));
+    newSocket.on('worldEventUpdated', (event: CustomWorldEvent) => set(state => {
+       const exists = state.worldEvents.find(e => e.id === event.id);
+       if (exists) return { worldEvents: state.worldEvents.map(e => e.id === event.id ? event : e) };
+       return { worldEvents: [event, ...state.worldEvents] };
+    }));
     newSocket.on('chatMessage', (msg: ChatMessage) => set((state) => ({ chatMessages: [...state.chatMessages, msg] })));
     newSocket.on('nationCreated', (nation: Nation) => set((state) => ({ nations: [...state.nations, { ...nation, gdpHistory: [] }] })));
     newSocket.on('nationUpdated', (nation: Nation) => set((state) => {
@@ -733,5 +767,10 @@ export const useGameStore = create<GameState>((set, get) => ({
   addCustomWikiEvent: (nationId, description, customWiki) => {
     const { socket } = get();
     if (socket) socket.emit('addCustomWikiEvent', { nationId, description, customWiki });
+  },
+
+  updateWikiNavbox: (nationId, navbox) => {
+    const { socket } = get();
+    if (socket) socket.emit('updateWikiNavbox', { nationId, navbox });
   }
 }));

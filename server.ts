@@ -14,7 +14,12 @@ async function startServer() {
       const { imageUrl } = req.body;
       if (!imageUrl) return res.status(400).json({ error: 'No image URL provided' });
       
-      const fetchResp = await fetch(imageUrl);
+      const fetchResp = await fetch(imageUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8'
+        }
+      });
       if (!fetchResp.ok) throw new Error('Failed to fetch image');
       const arrayBuffer = await fetchResp.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
@@ -22,7 +27,6 @@ async function startServer() {
       
       res.json({ base64: buffer.toString('base64'), mimeType });
     } catch (e: any) {
-      console.error('Fetch image error:', e);
       res.status(500).json({ error: e.message });
     }
   });
@@ -47,6 +51,7 @@ async function startServer() {
   const mailChats = new Map();
   const treaties = new Map();
   const historicalNations = new Map();
+  const worldEvents = new Map();
   const lastNewsTime = new Map<string, number>();
 
   const getRandomColor = () => '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
@@ -80,11 +85,13 @@ async function startServer() {
       colonizationBattles: Array.from(colonizationBattles.values()),
       treaties: Array.from(treaties.values()),
       mailChats: player ? getMailChatsForPlayer(player.nationId) : [],
-      wikiNations: Array.from(historicalNations.values())
+      wikiNations: Array.from(historicalNations.values()),
+      worldEvents: Array.from(worldEvents.values())
     });
 
     socket.on('getWikiData', () => {
       socket.emit('wikiData', Array.from(historicalNations.values()));
+      socket.emit('worldEventsData', Array.from(worldEvents.values()));
     });
 
     socket.on('chatMessage', (data) => {
@@ -1480,12 +1487,37 @@ async function startServer() {
       const realNationId = data.nationId || player.diplomaticEntityId || player.nationId;
       const wiki = historicalNations.get(realNationId);
       if (wiki) {
+        if (!wiki.events) wiki.events = [];
         wiki.events.push({
           timestamp: Date.now(),
           type: 'history',
           description: data.description,
           customWiki: data.customWiki
         });
+        io.emit('wikiData', Array.from(historicalNations.values()));
+      }
+    });
+
+    socket.on('addWorldEvent', (data) => {
+      worldEvents.set(data.id, data);
+      io.emit('worldEventUpdated', data);
+    });
+
+    socket.on('updateWorldEvent', (data) => {
+      if (worldEvents.has(data.id)) {
+        worldEvents.set(data.id, data);
+        io.emit('worldEventUpdated', data);
+      }
+    });
+
+    socket.on('updateWikiNavbox', (data) => {
+      const player = players.get(playerId);
+      if (!player || !player.nationId) return;
+      
+      const realNationId = data.nationId || player.diplomaticEntityId || player.nationId;
+      const wiki = historicalNations.get(realNationId);
+      if (wiki) {
+        wiki.navbox = data.navbox;
         io.emit('wikiData', Array.from(historicalNations.values()));
       }
     });
